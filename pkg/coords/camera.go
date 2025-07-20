@@ -33,7 +33,11 @@ func (c *Camera) MovingY(val int) {
 }
 
 func (c *Camera) AddZoom(val float32) {
-	c.Zoom += val
+	tmp := c.Zoom + val
+	if tmp <= 0 {
+		return
+	}
+	c.Zoom = tmp
 }
 
 func (c *Camera) NormalizeSize(v int) int {

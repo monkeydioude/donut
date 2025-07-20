@@ -22,6 +22,7 @@ func (i *Intro) Update(gs *scene.GameState) error {
 	if gs == nil {
 		return fmt.Errorf("nil gs pointer")
 	}
+	_ = gs.Manager.ChangeScene(&Game{}, gs)
 	i.UI.Update()
 	return nil
 }

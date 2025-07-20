@@ -1,14 +1,36 @@
+//go:generate go run ./generators/tiles
+//go:generate go run ./generators/controls
 package config
 
 import (
 	_ "embed"
+	"runtime"
 )
 
-//go:embed yml/game.config.yml
-var gameConfig []byte
+var (
+	//go:embed yml/game.config.yml
+	gameConfig []byte
+	//go:embed yml/window.config.yml
+	windowConfig []byte
+	//go:embed yml/controls.config.yml
+	controlsConfig []byte
+	//go:embed img/tile_set.png
+	tileSet []byte
+	//go:embed yml/tiles.config.yml
+	tilesConfig []byte
+)
 
-//go:embed yml/window.config.yml
-var windowConfig []byte
+func init() {
+	initScenes()
+	initWindows()
+	initControls()
+	initTiles()
 
-//go:embed yml/controls.config.yml
-var controlsConfig []byte
+	// cleanup
+	gameConfig = nil
+	windowConfig = nil
+	controlsConfig = nil
+	tileSet = nil
+	tilesConfig = nil
+	runtime.GC()
+}

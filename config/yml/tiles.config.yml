@@ -1,0 +1,12 @@
+Empty:
+  id: 0
+Dirt:
+  id: 1
+Grass:
+  id: 2
+Water:
+  id: 3
+Stone:
+  id: 4
+GrassWithFlowers:
+  id: 5
