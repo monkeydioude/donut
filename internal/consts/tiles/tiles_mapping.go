@@ -2,10 +2,10 @@
 package tiles
 
 const (
-	Water            int = 3
-	Stone            int = 4
-	GrassWithFlowers int = 5
-	Empty            int = 0
-	Dirt             int = 1
-	Grass            int = 2
+	Empty            = 0
+	Dirt             = 1
+	Grass            = 2
+	Water            = 3
+	Stone            = 4
+	GrassWithFlowers = 5
 )

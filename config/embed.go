@@ -1,5 +1,4 @@
-//go:generate go run ./generators/tiles
-//go:generate go run ./generators/controls
+//go:generate go run ./generator
 package config
 
 import (

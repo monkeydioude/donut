@@ -1,12 +1,12 @@
-Empty:
-  id: 0
-Dirt:
-  id: 1
-Grass:
-  id: 2
-Water:
-  id: 3
-Stone:
-  id: 4
-GrassWithFlowers:
-  id: 5
+0:
+  name: Empty
+1:
+  name: Dirt
+2:
+  name: Grass
+3:
+  name: Water
+4:
+  name: Stone
+5:
+  name: GrassWithFlowers

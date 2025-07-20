@@ -13,16 +13,16 @@ import (
 var TileSet *ebiten.Image
 
 type Tile struct {
-	ID int `yml:"id"`
+	Name string `yml:"name"`
 }
 
 type TilesConfig struct {
-	Mapping map[string]Tile
+	Mapping map[int]Tile
 	TileSet *ebiten.Image
 }
 
 var Tiles = &TilesConfig{
-	Mapping: make(map[string]Tile),
+	Mapping: make(map[int]Tile),
 	TileSet: TileSet,
 }
 
