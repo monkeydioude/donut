@@ -41,7 +41,11 @@ func (c *Camera) AddZoom(val float32) {
 }
 
 func (c *Camera) NormalizeSize(v int) int {
-	return int(c.Zoom * float32(v))
+	res := int(c.Zoom * float32(v))
+	if res <= 0 {
+		return 1
+	}
+	return res
 }
 
 func (c *Camera) ResetZoom() {

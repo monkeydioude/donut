@@ -1,4 +1,5 @@
-TileWidth: 128
-TileHeight: 64
+TileWidth: 256
+TileHeight: 256
+TileHeightOffset: 128
 RefWidth: 800
 RefHeight: 600

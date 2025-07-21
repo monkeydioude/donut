@@ -20,6 +20,9 @@ func (s Screen) NormalizeX(x, w int) int {
 }
 
 func (s Screen) NormalizeXWithCamera(x, w int, c *coords.Camera) int {
+	if x == 0 || s.Width == 0 || w == 0 {
+		return 1
+	}
 	return c.NormalizeSize(x * s.Width / w)
 }
 

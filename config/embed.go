@@ -17,6 +17,8 @@ var (
 	tileSet []byte
 	//go:embed yml/tiles.config.yml
 	tilesConfig []byte
+	//go:embed map/map_1.csv
+	map1 []byte
 )
 
 func init() {
@@ -24,6 +26,7 @@ func init() {
 	initWindows()
 	initControls()
 	initTiles()
+	initMap()
 
 	// cleanup
 	gameConfig = nil
