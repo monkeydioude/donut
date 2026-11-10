@@ -1,0 +1,22 @@
+# Hot reload for the API (make dev-back): rebuilds and restarts on any .go or .sql change.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/donut ./cmd/donut"
+  bin = "./tmp/donut"
+  include_ext = ["go", "sql"]
+  exclude_dir = ["tmp"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 300
+  # false: when the new code does not build, the last good API keeps running
+  stop_on_error = false
+  # SIGINT lets the server close and free the port before the restart
+  send_interrupt = true
+  kill_delay = "2s"
+
+[log]
+  main_only = true
+
+[misc]
+  clean_on_exit = true

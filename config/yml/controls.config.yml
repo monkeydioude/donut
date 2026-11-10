@@ -1,8 +1,0 @@
-KeyMapping:
-  Up: [W, Up]
-  Down: [S, Down]
-  Left: [A, Left]
-  Right: [D, Right]
-  ZoomIn: [Z]
-  ZoomOut: [C]
-  ZoomReset: [X]

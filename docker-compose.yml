@@ -1,0 +1,21 @@
+services:
+  # Donut's own Postgres. 5434: Kabane's containers often hold 5432 and 5433.
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: donut
+      POSTGRES_PASSWORD: donut
+      POSTGRES_DB: donut
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      # localhost only: the dev password must not be reachable from the network
+      - "127.0.0.1:${DB_PORT:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U donut -d donut"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  db-data:
