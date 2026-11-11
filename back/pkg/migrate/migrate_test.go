@@ -34,12 +34,12 @@ func TestApplyRunsEveryMigrationOnce(t *testing.T) {
 	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema)
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()))
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
 	var maps int
 	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "maps"}.Sanitize()).Scan(&maps))
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()), "a second run applies nothing, so it doesn't fail on existing tables")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0001 test 6
@@ -53,7 +53,7 @@ func TestApplyStopsOnABrokenMigration(t *testing.T) {
 	err := migrate.Apply(ctx, tx, files, schema, logs.Discard())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "9999.up.sql")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0003 test 10
@@ -84,9 +84,10 @@ func TestMigration0002DropsTheOldMaps(t *testing.T) {
 }
 
 // ADR 0007 test 22
-// ADR 0007 test 22, ADR 0008 test 16 and ADR 0009 test 10: migrations 0003, 0004 and 0005 each delete every map.
+// ADR 0007 test 22, ADR 0008 test 16, ADR 0009 test 10 and ADR 0011: migrations 0003, 0004, 0005 and 0006 each delete
+// every map.
 func TestMigrationsDeleteEveryMap(t *testing.T) {
-	for _, migration := range []string{"0003", "0004", "0005"} {
+	for _, migration := range []string{"0003", "0004", "0005", "0006"} {
 		t.Run(migration, func(t *testing.T) { testMigrationDeletesEveryMap(t, migration) })
 	}
 }

@@ -40,6 +40,8 @@ import { createRegionBanner } from './ui/banner';
 import { createCameraButton } from './ui/cameraButton';
 import { spriteCursor, spriteDataUrl } from './ui/cursor';
 import { createMapScreen, type MapArt } from './ui/mapScreen';
+import { createChatbox } from './ui/chatbox';
+import { createCoordinatesLabel } from './ui/coordinates';
 import { createActionMenu } from './ui/menu';
 import { showNotice } from './ui/notice';
 import { listenToPointer } from './ui/pointer';
@@ -194,6 +196,10 @@ function play(config: GameConfig, host: HTMLElement, app: Application, world: Wo
     const anchor = players.ownCell();
     return anchor ? nearestCopy(world.grid, cell, anchor) : cell;
   };
+  // bottom left, top to bottom: the hovered cell's coordinates, yours, then the chatbox
+  const corner = bottomLeftCorner(host);
+  const hoveredCoordinates = createCoordinatesLabel(corner, 'hud-coords hud-coords-hovered');
+  const ownCoordinates = createCoordinatesLabel(corner, 'hud-coords');
   const session = startPlayersSession({
     map: world.map,
     socketUrl: socketUrl(window.location, world.map.slug, guest),
@@ -214,6 +220,7 @@ function play(config: GameConfig, host: HTMLElement, app: Application, world: Wo
         (cell) => tileOnCanvas(drawn(cell), heightOf(cell), placement(), world.heights, config.tile.width),
         logger.scope('menu'),
       ),
+    createChatbox: (onLine) => createChatbox(corner, onLine, logger.scope('chatbox')),
     players,
     chunks: exploring(
       createChunksView({
@@ -270,6 +277,18 @@ function play(config: GameConfig, host: HTMLElement, app: Application, world: Wo
     log: logger.scope('screens'),
   });
   driveCamera(app, world, camera, session, logger.scope('camera'));
+  app.ticker.add(() => {
+    hoveredCoordinates.show(session.hovered());
+    ownCoordinates.show(session.whereabouts().you);
+  });
+}
+
+/** The bottom left corner of the screen, stacking what's put in it from top to bottom. */
+function bottomLeftCorner(host: HTMLElement): HTMLElement {
+  const corner = document.createElement('div');
+  corner.className = 'hud-corner';
+  host.appendChild(corner);
+  return corner;
 }
 
 /** The chunks view, also telling each chunk shown: what you explored (ADR 0005). */
@@ -329,6 +348,7 @@ function worldmapHandlers(camera: Camera, toggleLock: () => void, session: Playe
     zoomOut: ({ at }) => camera.zoom(-1, at),
     pan: ({ delta }) => delta && camera.pan(delta),
     cancel: () => session.cancel(),
+    chat: () => session.openChat(),
   };
 }
 

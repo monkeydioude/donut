@@ -1,9 +1,10 @@
 import { silent, type Log } from '../debug/log';
 import { exploredShare, exploredText, isExplored, type Exploration } from '../game/exploration';
-import { blinkOn, donutMark, mapScale, rectangleMark, type DonutRing, type DonutShape, type Size } from '../game/mapMarks';
+import { blinkOn, donutMark, mapCellAt, mapScale, rectangleMark, type DonutRing, type DonutShape, type Size } from '../game/mapMarks';
 import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { CHUNK_SIZE, type Grid } from '../map/grid';
 import { gridOf, type MapDescription } from '../map/worldMap';
+import { createCoordinatesLabel, type CoordinatesLabel } from './coordinates';
 
 /** What the map screen shows (ADR 0005): your whereabouts, your region's name, what you explored. */
 export interface MapView {
@@ -89,6 +90,9 @@ export function createMapScreen(deps: MapScreenDeps): MapScreen {
     drawVeil(dom.veil, explored);
     dom.explored.textContent = exploredText(exploredShare(explored, grid));
   };
+  // the hovered cell's coordinates, bottom left
+  dom.block.addEventListener('pointermove', (event) => dom.hovered.show(mapCellAt(pointIn(dom.block, event), scale, grid)));
+  dom.block.addEventListener('pointerleave', () => dom.hovered.show(null));
 
   const screen: MapScreen = {
     open(view) {
@@ -107,6 +111,7 @@ export function createMapScreen(deps: MapScreenDeps): MapScreen {
     },
     close() {
       dom.backdrop.hidden = true;
+      dom.hovered.show(null);
       log('closed', { explored: dom.explored.textContent });
     },
     isOpen: () => !dom.backdrop.hidden,
@@ -124,11 +129,12 @@ interface MapScreenDom {
   marks: HTMLElement;
   you: HTMLImageElement;
   explored: HTMLElement;
+  hovered: CoordinatesLabel;
 }
 
 /**
  * The screen, hidden: the map's block, holding the map, its veil and marks, and over them the names (top center),
- * the donut (top right) and the explored share (bottom right).
+ * the donut (top right), the hovered cell's coordinates (bottom left) and the explored share (bottom right).
  */
 function buildScreen(host: HTMLElement, map: MapDescription, art: MapArt, grid: Grid): MapScreenDom {
   const backdrop = element('div', 'map-backdrop', host);
@@ -150,7 +156,8 @@ function buildScreen(host: HTMLElement, map: MapDescription, art: MapArt, grid: 
   image(donutBox, art.donut, 'map-donut-image');
   const donutMark = markImage(donutBox, art.you.square, 'map-you');
   const explored = element('div', 'map-explored map-over', block);
-  return { backdrop, block, region, donutMark, image: mapImage, veil, marks, you, explored };
+  const hovered = createCoordinatesLabel(block, 'map-coords map-over');
+  return { backdrop, block, region, donutMark, image: mapImage, veil, marks, you, explored, hovered };
 }
 
 /** Asks for the map's image the first time the map opens; on failure, the map gives way to a message. */
@@ -196,6 +203,12 @@ function image(parent: HTMLElement, src: string, className: string): HTMLImageEl
 
 function markImage(parent: HTMLElement, src: string, className: string): HTMLImageElement {
   return image(parent, src, `map-mark ${className}`);
+}
+
+/** Where the pointer is, in CSS pixels from the element's top left corner. */
+function pointIn(element: HTMLElement, event: PointerEvent): ScreenPoint {
+  const box = element.getBoundingClientRect();
+  return { x: event.clientX - box.left, y: event.clientY - box.top };
 }
 
 /** A mark centered on a point of its layer. */

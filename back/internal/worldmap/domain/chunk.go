@@ -47,6 +47,8 @@ func (c *Chunk) validate(regions map[uint8]bool) error {
 			return invalid("chunk %v, cell %v: unknown ground code %d", c.Key, c.cellAt(i), c.Ground[i])
 		case c.Height[i] < MinHeight || c.Height[i] > MaxHeight:
 			return invalid("chunk %v, cell %v: height %d is outside %d to %d", c.Key, c.cellAt(i), c.Height[i], MinHeight, MaxHeight)
+		case c.Height[i] > MaxGroundHeight && !c.Ground[i].RisesAboveGround():
+			return invalid("chunk %v, cell %v: height %d is only for mountains and glaciers", c.Key, c.cellAt(i), c.Height[i])
 		case !regions[c.Region[i]]:
 			return invalid("chunk %v, cell %v: unknown region %d", c.Key, c.cellAt(i), c.Region[i])
 		}

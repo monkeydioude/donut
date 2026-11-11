@@ -55,7 +55,7 @@
       .map-over, .map-donut { position: absolute; z-index: 2; }
       .map-marks > .map-you { z-index: 3; }
       .map-blink-off .map-you { visibility: hidden; }
-      .map-over {
+      .map-over, .hud-coords {
         color: #fff4dc; font-family: 'Zen Maru Gothic', sans-serif; line-height: 1.25; pointer-events: none;
         --outline: #3a2e4f;
         text-shadow: -2px 0 var(--outline), 2px 0 var(--outline), 0 -2px var(--outline), 0 2px var(--outline),
@@ -67,18 +67,61 @@
       .map-donut { top: 8px; right: 8px; line-height: 0; }
       .map-donut[hidden] { display: none; }
       .map-explored { right: 10px; bottom: 8px; font: 500 15px/1.25 'Zen Maru Gothic', sans-serif; }
+      .map-coords { left: 10px; bottom: 8px; font: 500 15px/1.25 'Zen Maru Gothic', sans-serif; }
+      .map-coords[hidden] { display: none; }
       .map-error {
         display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
         color: #fff4dc; font: 500 17px/1.4 'Zen Maru Gothic', sans-serif;
       }
       .map-failed .map-error { display: flex; }
-      .map-failed .map-image, .map-failed .map-veil, .map-failed .map-marks { visibility: hidden; }
+      .map-failed .map-image, .map-failed .map-veil, .map-failed .map-marks, .map-failed .map-coords { visibility: hidden; }
       .notice {
         position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
         padding: 8px 14px; border-radius: 6px;
         background: #f6efe2; color: #3f3550; font: 500 14px/1.4 'Zen Maru Gothic', sans-serif;
         box-shadow: 0 2px 0 #3f3550;
       }
+      /*
+       * The bottom left corner: the hovered cell's coordinates in yellow, like the selection's border, over yours in
+       * cream, both with a soft dark outline like the map's, over the chatbox. Only the chatbox catches the pointer.
+       */
+      .hud-corner {
+        position: fixed; z-index: 10; left: 12px; bottom: 12px;
+        display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none;
+      }
+      .hud-coords { padding: 0 4px; font: 500 15px/1.25 'Zen Maru Gothic', sans-serif; user-select: none; }
+      .hud-coords[hidden] { display: none; }
+      .hud-coords-hovered { color: #ffd84a; }
+      /*
+       * The chatbox (ADR 0010): a bar at the bottom, 6 lines of history over the input, cream text on the notice's
+       * dark purple, half transparent. Your lines are dimmer, warnings gold, errors pink.
+       */
+      .chatbox {
+        width: min(560px, calc(100vw - 24px)); pointer-events: auto;
+        display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 6px;
+        background: rgba(63, 53, 80, 0.55); color: #fff4dc; font: 500 14px/1.35 'Zen Maru Gothic', sans-serif;
+      }
+      .chatbox-history { height: calc(6 * 1.35em); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+      .chatbox-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .chatbox-you { color: #d8d0e6; }
+      .chatbox-warning { color: #ffe3a6; }
+      .chatbox-error { color: #ff9fb8; }
+      .chatbox-input {
+        width: 100%; box-sizing: border-box; padding: 4px 6px; border: 0; border-radius: 4px;
+        background: rgba(29, 35, 48, 0.7); color: #fff4dc; font: inherit; outline: none;
+      }
+      .chatbox-input::placeholder { color: #8e98d6; }
+      /* The commands a typed line may be: a darker panel over the history, just above the input, usages in gold. */
+      .chatbox-entry { position: relative; }
+      .chatbox-commands {
+        position: absolute; left: 0; right: 0; bottom: calc(100% + 4px);
+        display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 4px;
+        background: rgba(29, 35, 48, 0.9); pointer-events: none;
+      }
+      .chatbox-commands[hidden] { display: none; }
+      .chatbox-command-usage { color: #ffe3a6; }
+      .chatbox-command-does { margin-left: 10px; color: #d8d0e6; }
+      .chatbox-input:focus { box-shadow: 0 0 0 2px #ffe3a6; }
       /*
        * The region banner, Dark Souls style but cute: the name in big cream letters with a soft dark outline, a thin
        * line with a small heart under it, no window. It fades in over 0.6 s, stays 2.5 s, and fades out over 1 s.

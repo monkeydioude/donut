@@ -9,13 +9,16 @@ Columns: 8
  79 159 216	ground.png: ocean
 138 134 148	ground.png: mountain
 223 244 251	ground.png: glacier
- 32  32  32	height.png: height -3
- 64  64  64	height.png: height -2
- 96  96  96	height.png: height -1
-128 128 128	height.png: height 0
-160 160 160	height.png: height 1
-192 192 192	height.png: height 2
-224 224 224	height.png: height 3
+ 30  58 138	height.png: height -3
+ 37  99 235	height.png: height -2
+ 56 189 248	height.png: height -1
+ 74 222 128	height.png: height 0
+250 204  21	height.png: height 1
+249 115  22	height.png: height 2
+220  38  38	height.png: height 3
+216 180 254	height.png: height 4
+168  85 247	height.png: height 5
+107  33 168	height.png: height 6
 127 217 154	regions.png: Sprinkle Meadow
 108 201 160	regions.png: Glaze Hills
 138 223 174	regions.png: Cinnamon Vale

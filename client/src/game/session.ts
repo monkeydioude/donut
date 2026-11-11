@@ -11,7 +11,15 @@ import type { PointerHandlers, PointerListener } from '../ui/pointer';
 import { silent, type Log } from '../debug/log';
 import { enterRegion, initialBanner } from './banner';
 import { applyCommand, canMove, initialCommand, shownPath, type CommandEvent, type CommandState } from './command';
+import { parseLine } from './commands';
+import { initialGameLog, logMessage, logMove, type LogLine } from './gameLog';
 import { applyMessage, emptyPlayers, ownPlayer, type PlayersState } from './players';
+
+/** The chatbox, as the session drives it (ADR 0010). */
+export interface SessionChatbox {
+  addLine(line: LogLine): void;
+  focus(): void;
+}
 
 /** The action menu, as the session drives it. */
 export interface CommandMenu {
@@ -31,6 +39,8 @@ export interface PlayersSessionDeps {
   /** Calls the handlers on hovers, clicks and cancels. */
   listenToPointer: (handlers: PointerHandlers) => PointerListener;
   createMenu: (choices: MenuChoices) => CommandMenu;
+  /** The chatbox, told what to do with a typed line. */
+  createChatbox: (onLine: (text: string) => void) => SessionChatbox;
   players: PlayersView;
   chunks: ChunksView;
   overlay: OverlayView;
@@ -57,7 +67,11 @@ export interface PlayersSession {
   followCamera(): void;
   /** Cancels the selection, as the right click does. */
   cancel(): void;
+  /** Gives the chatbox the focus (ADR 0010). */
+  openChat(): void;
   whereabouts(): Whereabouts;
+  /** The cell under the pointer, within the map; null off the chunks you hold. */
+  hovered(): TilePoint | null;
   leave(): void;
 }
 
@@ -72,6 +86,28 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
   let command = initialCommand();
   const heldRef: HeldChunksRef = deps.held ?? { current: emptyChunks() };
   let banner = initialBanner();
+  let gameLog = initialGameLog();
+
+  // a typed line: answered here, or sent as a teleport, echoed either way (ADR 0010)
+  const chatbox = deps.createChatbox((text) => {
+    chatbox.addLine({ kind: 'you', text });
+    const parsed = parseLine(text);
+    if (!parsed) return;
+    if ('answer' in parsed) {
+      log('command refused here', { text, answer: parsed.answer });
+      chatbox.addLine({ kind: 'error', text: parsed.answer });
+      return;
+    }
+    log('teleport sent', parsed.command);
+    socket.teleport(parsed.command.map, parsed.command.to);
+  });
+  // the log of what a message tells, named from the players as they were before it: `left` only tells an id
+  const logLines = (message: ServerMessage, before: PlayersState) => {
+    const nameOf = (id: string) => before.players.get(id)?.name ?? null;
+    const next = logMessage(gameLog, message, { you: before.you, nameOf, map: deps.map.slug, now: now() });
+    gameLog = next.state;
+    next.lines.forEach((line) => chatbox.addLine(line));
+  };
 
   const applyChunks = (message: ServerMessage) => {
     if (message.type === 'chunk') {
@@ -113,6 +149,7 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
     onMessage: (message) => {
       applyChunks(message);
       const before = players;
+      logLines(message, before);
       players = applyMessage(players, message);
       if (players !== before) {
         log(`players after ${message.type}`, { you: players.you, count: players.players.size, players: [...players.players.values()] });
@@ -139,6 +176,7 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
       if (!command.selection) return;
       log('menu: Move', { to: command.selection.cell, path: command.selection.path });
       socket.walk(command.selection.cell);
+      chatbox.addLine(logMove(command.selection.cell));
       dispatch({ type: 'move' });
     },
     onCancel: () => {
@@ -176,7 +214,9 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
       if (command.selection) menu.show(command.selection.cell, canMove(command));
     },
     cancel: () => dispatch({ type: 'cancel' }),
+    openChat: () => chatbox.focus(),
     whereabouts: () => whereaboutsOf(players, heldRef.current),
+    hovered: () => command.hover,
     leave: () => {
       log('leaving');
       pointer.stop();

@@ -3,6 +3,7 @@ package infra_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -30,8 +31,8 @@ func smallTerrain() domain.Map {
 			LakeFromOcean: 10, LakeFromWater: 6, Wobble: 0.125, RiverTries: 5, Spawn: domain.SpawnRiver{Near: core.Cell{Col: 79, Row: 79}, West: domain.Span{Min: 20, Max: 25}, Above: domain.Span{Min: 8, Max: 10}, Wobble: 3},
 			Bridges: domain.BridgeOptions{Every: 20, MaxSpan: 3}},
 		Holes:     domain.HoleOptions{PerChunk: 1, Size: domain.Span{Min: 1, Max: 4}, FromWater: 3},
-		Mountains: domain.MountainOptions{Level: 2, MinSummit: 3, Cover: 0.6, Size: domain.Span{Min: 2, Max: 6}},
-		Glaciers:  domain.GlacierOptions{HalfWidth: 20, PerChunk: 3, Size: domain.Span{Min: 4, Max: 12}, Clearance: 10, Spawn: core.Cell{Col: 79, Row: 79}},
+		Mountains: domain.MountainOptions{Level: 2, MinSummit: 3, Reach: 6, FootLevel: 1, Clearance: 10, Spawn: core.Cell{Col: 79, Row: 79}},
+		Glaciers:  domain.GlacierOptions{Core: 10, Edge: 20, Pass: 12, Spawn: core.Cell{Col: 79, Row: 79}, RiseEvery: 4},
 	}
 	return domain.Generate(opts, rand.New(rand.NewPCG(9, 9)))
 }
@@ -58,6 +59,15 @@ func paint(t *testing.T, folder fstest.MapFS, name string, x, y int, c color.NRG
 	var out bytes.Buffer
 	require.NoError(t, png.Encode(&out, rgba))
 	folder[name] = &fstest.MapFile{Data: out.Bytes()}
+}
+
+// hexAt is the color of a pixel of a PNG of the folder, as "#rrggbb".
+func hexAt(t *testing.T, folder fstest.MapFS, name string, x, y int) string {
+	t.Helper()
+	img, err := png.Decode(bytes.NewReader(folder[name].Data))
+	require.NoError(t, err)
+	c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+	return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
 }
 
 // editManifest changes map.json as plain JSON.
@@ -99,6 +109,29 @@ func TestMapFileReadsBackTheSame(t *testing.T) {
 	assert.Contains(t, string(folder["README.md"].Data), "`#dff4fb` | glacier", "ADR 0009")
 }
 
+// ADR 0011 test 2
+func TestTheHeightLayerHasAColorPerLevel(t *testing.T) {
+	colors := []string{"#1e3a8a", "#2563eb", "#38bdf8", "#4ade80", "#facc15", "#f97316", "#dc2626", "#d8b4fe", "#a855f7", "#6b21a8"}
+	m := domain.Generate(domain.GenerateOptions{Slug: "tall", Name: "Tall", Width: 64, Height: 64}, rand.New(rand.NewPCG(1, 1)))
+	for i := range colors {
+		height := int8(domain.MinHeight + i)
+		c := core.Cell{Col: i, Row: 3}
+		if height > domain.MaxGroundHeight {
+			m.SetGround(c, []domain.TileKind{domain.TileMountain, domain.TileGlacier}[i%2])
+		}
+		m.SetHeight(c, height)
+	}
+	folder := encoded(t, m)
+	read, err := infra.DecodeMapFile(folder)
+	require.NoError(t, err)
+	assert.Equal(t, m.Chunks, read.Chunks, "each level from -3 to +6 reads back")
+	readme := string(folder["README.md"].Data)
+	for i, hex := range colors {
+		assert.Contains(t, readme, fmt.Sprintf("`%s` | height %d", hex, domain.MinHeight+i))
+		assert.Equal(t, hex, hexAt(t, folder, "height.png", i, 3), "height %d", domain.MinHeight+i)
+	}
+}
+
 // ADR 0007 test 15
 func TestMapFileRefuses(t *testing.T) {
 	cases := map[string]struct {
@@ -114,9 +147,12 @@ func TestMapFileRefuses(t *testing.T) {
 		}, "height.png is 32 x 32, the map is 160 x 160"},
 		"an unknown ground color":   {func(t *testing.T, f fstest.MapFS) { paint(t, f, "ground.png", 3, 4, gray(1)) }, "ground.png (3, 4): #010101 isn't a ground kind"},
 		"a gray that isn't a level": {func(t *testing.T, f fstest.MapFS) { paint(t, f, "height.png", 3, 4, gray(0x8c)) }, "height.png (3, 4): #8c8c8c isn't a height"},
-		"a transparent height":      {func(t *testing.T, f fstest.MapFS) { paint(t, f, "height.png", 3, 4, color.NRGBA{}) }, "height.png (3, 4): transparent isn't a height"},
-		"a color of no region":      {func(t *testing.T, f fstest.MapFS) { paint(t, f, "regions.png", 3, 4, gray(1)) }, "regions.png (3, 4): #010101 isn't a region's color"},
-		"an unknown object color":   {func(t *testing.T, f fstest.MapFS) { paint(t, f, "objects.png", 3, 4, gray(1)) }, "objects.png (3, 4): #010101 isn't an object"},
+		"an old gray level (ADR 0011)": {
+			func(t *testing.T, f fstest.MapFS) { paint(t, f, "height.png", 3, 4, gray(0x80)) }, "height.png (3, 4): #808080 isn't a height",
+		},
+		"a transparent height":    {func(t *testing.T, f fstest.MapFS) { paint(t, f, "height.png", 3, 4, color.NRGBA{}) }, "height.png (3, 4): transparent isn't a height"},
+		"a color of no region":    {func(t *testing.T, f fstest.MapFS) { paint(t, f, "regions.png", 3, 4, gray(1)) }, "regions.png (3, 4): #010101 isn't a region's color"},
+		"an unknown object color": {func(t *testing.T, f fstest.MapFS) { paint(t, f, "objects.png", 3, 4, gray(1)) }, "objects.png (3, 4): #010101 isn't an object"},
 		"a half-transparent pixel": {func(t *testing.T, f fstest.MapFS) {
 			paint(t, f, "ground.png", 3, 4, color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0x80})
 		}, "ground.png (3, 4): #74d3a5 is half transparent"},
@@ -150,7 +186,7 @@ func TestMapFileRefuses(t *testing.T) {
 func TestMapFileAcceptsAHandMadeCliff(t *testing.T) {
 	m := domain.Generate(domain.GenerateOptions{Slug: "flat", Name: "Flat", Width: 64, Height: 64}, rand.New(rand.NewPCG(1, 1)))
 	folder := encoded(t, m)
-	paint(t, folder, "height.png", 5, 5, gray(0xc0))
+	paint(t, folder, "height.png", 5, 5, color.NRGBA{R: 0xf9, G: 0x73, B: 0x16, A: 0xff})
 	read, err := infra.DecodeMapFile(folder)
 	require.NoError(t, err)
 	assert.Equal(t, int8(2), read.HeightAt(core.Cell{Col: 5, Row: 5}), "2 next to 0")

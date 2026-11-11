@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blinkOn, donutMark, donutShape, mapScale, rectangleMark } from './mapMarks';
+import { blinkOn, donutMark, donutShape, mapCellAt, mapScale, rectangleMark } from './mapMarks';
 
 const world = { width: 1024, height: 512, wraps: true };
 const ring = { center: { x: 32, y: 32 }, outer: 28, inner: 12 };
@@ -78,5 +78,25 @@ describe('mapScale', () => {
 
   it('is ×½ when nothing fits', () => {
     expect(mapScale(map, { width: 300, height: 200 })).toBe(0.5);
+  });
+});
+
+describe('mapCellAt', () => {
+  const map = { width: 1024, height: 512 };
+
+  it("is the cell whose pixel holds the point, at the map's scale", () => {
+    expect(mapCellAt({ x: 10.5, y: 4.5 }, 1, map)).toEqual({ col: 10, row: 4 });
+    expect(mapCellAt({ x: 21, y: 9 }, 2, map)).toEqual({ col: 10, row: 4 });
+    expect(mapCellAt({ x: 5.25, y: 2.25 }, 0.5, map)).toEqual({ col: 10, row: 4 });
+  });
+
+  it('is the cell of its own mark', () => {
+    for (const scale of [2, 1, 0.5]) expect(mapCellAt(rectangleMark({ col: 1023, row: 511 }, scale), scale, map)).toEqual({ col: 1023, row: 511 });
+  });
+
+  it('is null off the map', () => {
+    expect(mapCellAt({ x: -0.1, y: 4 }, 1, map)).toBeNull();
+    expect(mapCellAt({ x: 1024, y: 4 }, 1, map)).toBeNull();
+    expect(mapCellAt({ x: 4, y: 1024 }, 2, map)).toBeNull();
   });
 });

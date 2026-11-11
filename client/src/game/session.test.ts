@@ -15,7 +15,7 @@ function chunk(region = 1): Chunk {
 }
 
 function setup(held?: HeldChunksRef) {
-  const sent: { type: 'plan' | 'walk'; to: Cell }[] = [];
+  const sent: ({ type: 'plan' | 'walk'; to: Cell } | { type: 'teleport'; map: string; to: Cell })[] = [];
   const menu: { shown: { cell: TilePoint; moveEnabled: boolean } | null } = { shown: null };
   const drawn: { path: readonly TilePoint[]; hover: TilePoint | null; chunks: string[]; banners: string[] } = {
     path: [],
@@ -23,6 +23,7 @@ function setup(held?: HeldChunksRef) {
     chunks: [],
     banners: [],
   };
+  const chat: { lines: string[]; focused: number; type: (text: string) => void } = { lines: [], focused: 0, type: () => {} };
   let socket: GameSocketHandlers | undefined;
   let pointer: PointerHandlers | undefined;
   let choices: MenuChoices | undefined;
@@ -32,7 +33,12 @@ function setup(held?: HeldChunksRef) {
     socketUrl: 'ws://test',
     openSocket: (_url, handlers) => {
       socket = handlers;
-      return { plan: (to) => sent.push({ type: 'plan', to }), walk: (to) => sent.push({ type: 'walk', to }), close: () => {} };
+      return {
+        plan: (to) => sent.push({ type: 'plan', to }),
+        walk: (to) => sent.push({ type: 'walk', to }),
+        teleport: (map, to) => sent.push({ type: 'teleport', map, to }),
+        close: () => {},
+      };
     },
     listenToPointer: (handlers) => {
       pointer = handlers;
@@ -41,6 +47,10 @@ function setup(held?: HeldChunksRef) {
     createMenu: (c) => {
       choices = c;
       return { show: (cell, moveEnabled) => (menu.shown = { cell, moveEnabled }), hide: () => (menu.shown = null) };
+    },
+    createChatbox: (onLine) => {
+      chat.type = onLine;
+      return { addLine: (line) => chat.lines.push(`${line.kind}: ${line.text}`), focus: () => chat.focused++ };
     },
     players: { sync: () => {}, ownPosition: () => null, ownCell: () => ({ col: 2, row: 2 }), relift: () => drawn.chunks.push('relift') },
     chunks: {
@@ -56,7 +66,7 @@ function setup(held?: HeldChunksRef) {
   });
   socket!.onMessage({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 2, row: 2 }], stepMs: 200 });
   socket!.onMessage({ type: 'chunk', chunk: chunk() });
-  return { playing, sent, menu, drawn, socket: socket!, pointer: pointer!, choices: choices!, isDisconnected: () => disconnected };
+  return { playing, sent, menu, drawn, chat, socket: socket!, pointer: pointer!, choices: choices!, isDisconnected: () => disconnected, hovered: () => playing.hovered() };
 }
 
 const tile = { col: 4, row: 2 };
@@ -122,11 +132,13 @@ describe('startPlayersSession', () => {
     const session = setup();
     session.pointer.hover({ col: 40, row: 2 });
     expect(session.drawn.hover, 'chunk (1, 0) is not held').toBeNull();
+    expect(session.hovered()).toBeNull();
     session.pointer.select({ col: 40, row: 2 });
     expect(session.sent).toEqual([]);
     expect(session.menu.shown).toBeNull();
     session.pointer.hover({ col: 3, row: 2 });
     expect(session.drawn.hover).toEqual({ col: 3, row: 2 });
+    expect(session.hovered()).toEqual({ col: 3, row: 2 });
   });
 
   it("shows the region banner once your cell's region is known", () => {
@@ -161,5 +173,61 @@ describe('whereabouts', () => {
 
   it('gives nothing before the welcome', () => {
     expect(whereaboutsOf(emptyPlayers(), emptyChunks())).toEqual({ you: null, others: [], region: null });
+  });
+});
+
+// ADR 0010 tests 11 to 14, through the session
+describe('the chatbox and the game log', () => {
+  it('a teleport line is echoed and sent; the others are answered here', () => {
+    const session = setup();
+    session.chat.type('/teleport world 1023 511');
+    expect(session.sent).toEqual([{ type: 'teleport', map: 'world', to: { col: 1023, row: 511 } }]);
+    session.chat.type('hello');
+    session.chat.type('/fly');
+    expect(session.sent).toHaveLength(1);
+    expect(session.chat.lines).toEqual([
+      'you: /teleport world 1023 511',
+      'you: hello',
+      'error: Chat comes later: only /teleport <map> <col> <row> works for now',
+      'you: /fly',
+      'error: Unknown command: /fly',
+    ]);
+  });
+
+  it('a teleport places you, logs it, and clears the selection and its path', () => {
+    const session = setup();
+    session.pointer.select(tile);
+    session.socket.onMessage({ type: 'planned', ...tile, path });
+    expect(session.menu.shown?.moveEnabled).toBe(true);
+
+    session.socket.onMessage({ type: 'teleported', col: 100, row: 100, walkable: false });
+    expect(session.menu.shown).toBeNull();
+    expect(session.drawn.path).toEqual([]);
+    expect(session.playing.whereabouts().you).toEqual({ col: 100, row: 100 });
+    expect(session.chat.lines).toEqual(['log: Teleported to world (100, 100)', "warning: (100, 100) isn't walkable: teleport again to leave"]);
+  });
+
+  it('logs the others coming and going by name, Move chosen, stops and refusals', () => {
+    const session = setup();
+    session.socket.onMessage({ type: 'joined', player: { id: 'b', name: 'Bob', robot: '', col: 3, row: 3 } });
+    session.socket.onMessage({ type: 'left', id: 'b' });
+    session.pointer.select(tile);
+    session.socket.onMessage({ type: 'planned', ...tile, path });
+    session.choices.onMove();
+    session.socket.onMessage({ type: 'stopped', col: 3, row: 2 });
+    session.socket.onMessage({ type: 'refused', request: 'teleport', reason: 'unknown map: mars' });
+    expect(session.chat.lines).toEqual([
+      'log: Bob entered the area',
+      'log: Bob left the area',
+      'log: You head to (4, 2)',
+      'log: You stopped at (3, 2)',
+      'error: unknown map: mars',
+    ]);
+  });
+
+  it('opens the chat on demand', () => {
+    const session = setup();
+    session.playing.openChat();
+    expect(session.chat.focused).toBe(1);
   });
 });

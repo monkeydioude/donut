@@ -16,6 +16,7 @@ function setup() {
     worldmap: {
       toggleLock: () => events.push('toggleLock'),
       center: () => {},
+      chat: () => {},
       zoomIn: () => {},
       zoomOut: () => {},
       pan: () => {},

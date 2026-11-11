@@ -68,6 +68,9 @@ function applyServer(state: CommandState, message: ServerMessage, you: string | 
       return message.id === you ? { ...state, walking: walkedTo(state.walking, message) } : state;
     case 'stopped':
       return { ...state, walking: [] };
+    case 'teleported':
+      // you're elsewhere: the selected tile and its path are stale, and the walk was dropped (ADR 0010)
+      return { ...state, selection: null, walking: [] };
     default:
       return state;
   }

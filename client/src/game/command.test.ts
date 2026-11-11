@@ -74,3 +74,13 @@ describe('applyCommand', () => {
     expect(shownPath(state)).toEqual(path);
   });
 });
+
+// ADR 0010 test 13
+describe('a teleport', () => {
+  it('clears the selection, its path and the walk', () => {
+    const state = run({ type: 'select', cell: tile }, server({ type: 'planned', ...tile, path }), server({ type: 'walking', path }), server({ type: 'teleported', col: 9, row: 9, walkable: true }));
+    expect(state.selection).toBeNull();
+    expect(state.walking).toEqual([]);
+    expect(shownPath(state)).toEqual([]);
+  });
+});

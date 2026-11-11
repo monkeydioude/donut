@@ -27,13 +27,16 @@ transparency. Paint with a pencil, or in indexed mode with `palette.gpl` (GIMP, 
 
 | Color | Means |
 |-------|-------|
-| `#202020` | height -3 |
-| `#404040` | height -2 |
-| `#606060` | height -1 |
-| `#808080` | height 0 |
-| `#a0a0a0` | height 1 |
-| `#c0c0c0` | height 2 |
-| `#e0e0e0` | height 3 |
+| `#1e3a8a` | height -3 |
+| `#2563eb` | height -2 |
+| `#38bdf8` | height -1 |
+| `#4ade80` | height 0 |
+| `#facc15` | height 1 |
+| `#f97316` | height 2 |
+| `#dc2626` | height 3 |
+| `#d8b4fe` | height 4 |
+| `#a855f7` | height 5 |
+| `#6b21a8` | height 6 |
 
 ## `regions.png`
 

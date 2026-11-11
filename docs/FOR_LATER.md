@@ -43,6 +43,10 @@ it: up to 8 px wrong at their feet. Fixing it means sorting the ground with them
 diagonal strips, one per depth line. It matters once taller art comes (trees, houses, taller cliffs), and how the
 ground is drawn may change then.
 
+Since ADR 0011, massifs and the glacier ring rise to +6, so a player just behind one is drawn over it, up to 48 px
+wrong. Once players are sorted with the ground, a player hidden behind terrain should show as a silhouette through
+it.
+
 ## Hand edits that survive the generator
 
 The starter map is generated once, then edited by hand (ADR 0007). Generating it again overwrites the hand edits. Hand

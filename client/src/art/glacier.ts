@@ -1,56 +1,73 @@
-import { cellFraction, depthFromEdge, type Edge } from './edges';
-import { createPixelBuffer, forEachPixel, setPixel, type PixelBuffer } from './pixelBuffer';
-import { groundCenter, isOnGround, textureSize, type TileFrame } from './tileFrame';
+import type { TilePoint } from '../iso/projection';
+import { forEachBlockPixel, isOnEdge, shadeIndex, type BlockPixel, type BlockShape } from './block';
+import { FACE_COLORS, ICE_STREAKS, isIceStreak, type FaceSide } from './cliff';
+import type { Edge } from './edges';
+import { facetAt, patternPoint, scatteredSeeds, type FacetHit } from './facets';
+import { createPixelBuffer, setPixel, type PixelBuffer } from './pixelBuffer';
+import { textureSize, type TileFrame } from './tileFrame';
 
-export const GLACIER_COLORS = { top: 0xdff4fb, crack: 0xb4e2f4, rim: 0xffffff, sideLit: 0xa6d8ee, sideDark: 0x86c3e3 } as const;
+/** The ice's top from its darkest shade to its lightest, lit by how its slope faces the light, like the rock's. */
+export const GLACIER_COLORS = {
+  top: [0x5fb4d8, 0x7dcbe5, 0x9fe4f1, 0xc2f2f9],
+  crack: 0x74c3df,
+  gloss: 0xeafcff,
+  edge: 0xd4f7fd,
+} as const;
 
-/** How high the block's top is raised over the ground diamond, as a share of the tile's width: the frame's headroom. */
-const ICE_SHARE = 0.1;
-/** Light crack lines across the top: where they are along the rows, how far along the columns they start. */
-const CRACK_LANES = [
-  { row: -0.22, offset: 0.5 },
-  { row: 0.2, offset: 0.1 },
+/** The ice's plates: 4 × 4 over the 8 × 8 cells of its pattern, bigger than the rock's facets, 2 shades. */
+const ICE_SEEDS = scatteredSeeds(4, 2, 23);
+/** Cracks run only between plates of different shades: the others melt into one, so it reads as ice, not tiles. */
+const CRACK = 0.04;
+/** Each plate's glint: two short "/" streaks up-left of its seed, in screen pixels from the seed. */
+const GLINTS = [
+  { x: -6, y: -3, halfLength: 3 },
+  { x: -2, y: -1, halfLength: 1.5 },
 ] as const;
-const CRACK = { halfThickness: 0.035, length: 0.35 } as const;
 
-/** The headroom a glacier's frame needs for its raised top. */
-export function iceHeadroom(tileWidth: number): number {
-  return Math.max(2, Math.round(tileWidth * ICE_SHARE));
+/** How a glacier cell looks (ADR 0011): its place in the pattern, its edges with a bright line, its shape. */
+export interface GlacierLook {
+  place: TilePoint;
+  edges: readonly Edge[];
+  shape: BlockShape;
 }
 
 /**
- * A glacier tile (ADR 0009): an ice block. Its top is the ground diamond raised by the frame's headroom, pale ice with
- * lighter cracks, the same on every cell, and a white rim on the edges given, toward cells that aren't glacier. Under
- * the top's front edges, down to the ground diamond's, the block's sides: a deeper blue, darker on the right.
+ * A glacier tile (ADR 0011): one block of a merged ice mass. Its top leans up to the higher ice behind, cyan-teal lit
+ * by how it faces the light, in large plates with soft cracks and a glint, laid on the map so neighbors join, a thin
+ * bright line on the edges given. Its sides are saturated blue with vertical streaks.
  */
-export function paintGlacier(frame: TileFrame, rim: readonly Edge[]): PixelBuffer {
+export function paintGlacier(frame: TileFrame, look: GlacierLook, levelPx: number): PixelBuffer {
   const { width, height } = textureSize(frame);
   const buffer = createPixelBuffer(width, height);
-  forEachPixel(width, height, (x, y) => {
-    const color = glacierColor(frame, x, y, rim);
-    if (color !== null) setPixel(buffer, x, y, color);
-  });
+  forEachBlockPixel(frame, look.shape, levelPx, (x, y, pixel) => setPixel(buffer, x, y, glacierColor(look, x, pixel)));
   return buffer;
 }
 
-/** The top where the ground diamond is, `headroom` pixels up; the sides where the ground diamond shows under it. */
-function glacierColor(frame: TileFrame, x: number, y: number, rim: readonly Edge[]): number | null {
-  const rise = frame.headroom;
-  if (isOnGround(frame, x, y + rise)) return topColor(frame, x, y + rise, rim);
-  if (!isOnGround(frame, x, y)) return null;
-  return x + 0.5 < groundCenter(frame).x ? GLACIER_COLORS.sideLit : GLACIER_COLORS.sideDark;
+function glacierColor(look: GlacierLook, x: number, pixel: BlockPixel): number {
+  if (pixel.part === 'side') return iceSideColor(x, pixel.side);
+  if (isOnEdge(pixel.at, look.edges)) return GLACIER_COLORS.edge;
+  return iceTopColor(patternPoint(look.place, pixel.at), pixel.light);
 }
 
-/** The top's color at its pixel, given where that pixel would be on the ground diamond. */
-function topColor(frame: TileFrame, x: number, onGroundY: number, rim: readonly Edge[]): number {
-  if (rim.some((edge) => depthFromEdge(frame, edge, x, onGroundY) < 1)) return GLACIER_COLORS.rim;
-  return isCrack(cellFraction(frame, x, onGroundY)) ? GLACIER_COLORS.crack : GLACIER_COLORS.top;
+/**
+ * The ice's top at a point of the pattern: one shade per slope, from its light, so the steps stand out; soft cracks
+ * between plates of different shades, a glint on the others. Also the icy tops of the tallest mountains.
+ */
+export function iceTopColor(point: TilePoint, light: number): number {
+  const plate = facetAt(ICE_SEEDS, point);
+  if (plate.border < CRACK && plate.nextShade !== plate.seed.shade) return GLACIER_COLORS.crack;
+  if (plate.seed.shade === 0 && isGlint(plate)) return GLACIER_COLORS.gloss;
+  return GLACIER_COLORS.top[shadeIndex(light, GLACIER_COLORS.top.length)] ?? GLACIER_COLORS.top[0];
 }
 
-function isCrack(at: { col: number; row: number }): boolean {
-  return CRACK_LANES.some((lane) => Math.abs(at.row - lane.row) < CRACK.halfThickness && fraction(at.col - lane.offset) < CRACK.length);
+/** A side: the ice faces' blue, a lighter streak every few pixels, like the faces under it. */
+function iceSideColor(x: number, side: FaceSide): number {
+  return isIceStreak(x) ? ICE_STREAKS[side] : FACE_COLORS.ice[side].face;
 }
 
-function fraction(value: number): number {
-  return value - Math.floor(value);
+/** On a "/" streak near the plate's seed, in screen pixels (at a 32 × 16 tile): as x goes right, y goes up. */
+function isGlint(plate: FacetHit): boolean {
+  const x = (plate.offset.col - plate.offset.row) * 16;
+  const y = (plate.offset.col + plate.offset.row) * 8;
+  return GLINTS.some((glint) => Math.abs(x - glint.x + (y - glint.y)) < 0.8 && Math.abs(x - glint.x) < glint.halfLength);
 }

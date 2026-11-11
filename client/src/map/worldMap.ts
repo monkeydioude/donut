@@ -12,9 +12,9 @@ export type BakedGroundKind = Exclude<DrawnGroundKind, 'water'>;
 export type ObjectKind = 'rock';
 
 export const GROUND_KINDS: readonly GroundKind[] = ['grass', 'water', 'hole', 'bridge', 'ocean', 'mountain', 'glacier', 'void'];
-/** A cell's height, in levels (ADR 0007). */
+/** A cell's height, in levels (ADR 0007): above +3, only mountains and glaciers (ADR 0011). */
 export const MIN_HEIGHT = -3;
-export const MAX_HEIGHT = 3;
+export const MAX_HEIGHT = 6;
 export const OBJECT_KINDS: readonly ObjectKind[] = ['rock'];
 
 /** Something standing on a cell of the map. */

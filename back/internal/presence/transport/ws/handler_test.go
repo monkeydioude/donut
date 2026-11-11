@@ -423,3 +423,32 @@ func TestACompressedMessageOverTheLimitClosesTheConnection(t *testing.T) {
 	_, _, err = conn.Read(ctx)
 	assert.Equal(t, websocket.StatusMessageTooBig, websocket.CloseStatus(err))
 }
+
+// ADR 0010 tests 8 and 9
+func TestTeleportOverTheWire(t *testing.T) {
+	server := newServer(t)
+	bobConn := join(t, server, bob, "Bob")
+	annConn := join(t, server, ann, "Ann")
+	read(t, bobConn) // ann joined
+
+	t.Run("done: teleported to you, moved to those who see both cells", func(t *testing.T) {
+		write(t, annConn, `{"type": "teleport", "map": "meadow", "col": 4, "row": 4}`)
+		assert.Equal(t, map[string]any{"type": "teleported", "col": 4.0, "row": 4.0, "walkable": true}, read(t, annConn))
+		assert.Equal(t, movedJSON(annPublic, 4, 4), read(t, bobConn))
+	})
+
+	t.Run("refused, with why", func(t *testing.T) {
+		write(t, annConn, `{"type": "teleport", "map": "mars", "col": 1, "row": 1}`)
+		assert.Equal(t, map[string]any{"type": "refused", "request": "teleport", "reason": "unknown map: mars"}, read(t, annConn))
+		write(t, annConn, `{"type": "teleport", "map": "meadow", "col": 9, "row": 9}`)
+		assert.Equal(t, map[string]any{"type": "refused", "request": "teleport", "reason": "(9, 9) is outside the map"}, read(t, annConn))
+	})
+
+	t.Run("malformed ones are ignored", func(t *testing.T) {
+		write(t, annConn, `{"type": "teleport", "col": 1, "row": 1}`)
+		write(t, annConn, `{"type": "teleport", "map": "meadow", "col": 1.5, "row": 1}`)
+		write(t, annConn, `{"type": "teleport", "map": 5, "col": 1, "row": 1}`)
+		write(t, annConn, `{"type": "plan", "col": 4, "row": 3}`)
+		assert.Equal(t, "planned", read(t, annConn)["type"], "the first answer is the valid plan's: nothing moved")
+	})
+}

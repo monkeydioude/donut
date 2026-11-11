@@ -8,8 +8,8 @@ import (
 	core "donut/internal/core/domain"
 )
 
-// The map image's colors (ADR 0005, ADR 0007, ADR 0009), from the client's art: its grass green, a shade of it per
-// region, its rocks' light gray, and the terrain's colors. The map file paints its ground with these too.
+// The map image's colors (ADR 0005, ADR 0007, ADR 0009, ADR 0011), from the client's art: its grass green, a shade of
+// it per region, its rocks' light gray, and the terrain's colors. The map file paints its ground with these too.
 var (
 	GrassGreen   = color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0xff}
 	RockGray     = color.NRGBA{R: 0xd2, G: 0xce, B: 0xc5, A: 0xff}
@@ -19,6 +19,9 @@ var (
 	BridgeBrown  = color.NRGBA{R: 0xb9, G: 0x8a, B: 0x5a, A: 0xff}
 	MountainGray = color.NRGBA{R: 0x8a, G: 0x86, B: 0x94, A: 0xff}
 	GlacierIce   = color.NRGBA{R: 0xdf, G: 0xf4, B: 0xfb, A: 0xff}
+	// GlacierShade is the glacier's flat ice in the client, which the map image shades by level: GlacierIce, the
+	// ground layer's color, is too pale to show the ring's steps.
+	GlacierShade = color.NRGBA{R: 0x9f, G: 0xe4, B: 0xf1, A: 0xff}
 	// RegionShades are close to the grass green, but easy to tell apart. Region n has shade (n - 1) mod 12.
 	RegionShades = [...]color.NRGBA{
 		{R: 0x7f, G: 0xd9, B: 0x9a, A: 0xff},
@@ -43,36 +46,48 @@ const (
 	levelShading = 0.07
 )
 
+// allLevels is how many heights a mountain or a glacier may have, from MinHeight to MaxHeight.
+const allLevels = MaxHeight - MinHeight + 1
+
 // imagePalette holds every color of a map's image, so it's a small paletted PNG: transparent, then each shade group's
-// grass, plain then on a border, at each level, then water, the ocean, holes, bridges, mountains, glaciers and
-// rocks. That's 190 colors.
+// grass, plain then on a border, at each level of the terrain, then water, the ocean, holes, bridges and rocks, then
+// mountains and glaciers at each level. That's 208 colors.
 var imagePalette = func() color.Palette {
 	palette := color.Palette{color.NRGBA{}}
 	for _, shade := range append([]color.NRGBA{GrassGreen}, RegionShades[:]...) {
 		for _, plain := range []color.NRGBA{shade, darker(shade)} {
-			for level := MinHeight; level <= MaxHeight; level++ {
-				palette = append(palette, atLevel(plain, int8(level)))
-			}
+			palette = append(palette, shadesOf(plain, MaxGroundHeight)...)
 		}
 	}
-	return append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, MountainGray, GlacierIce, RockGray)
+	palette = append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, RockGray)
+	palette = append(palette, shadesOf(MountainGray, MaxHeight)...)
+	return append(palette, shadesOf(GlacierShade, MaxHeight)...)
 }()
+
+// shadesOf is a color at each level from MinHeight to `top`.
+func shadesOf(c color.NRGBA, top int8) []color.Color {
+	shades := make([]color.Color, 0, int(top)-MinHeight+1)
+	for level := int8(MinHeight); level <= top; level++ {
+		shades = append(shades, atLevel(c, level))
+	}
+	return shades
+}
 
 const transparentIndex = 0
 
 var (
-	waterIndex    = uint8(len(imagePalette) - 7)
-	oceanIndex    = uint8(len(imagePalette) - 6)
-	holeIndex     = uint8(len(imagePalette) - 5)
-	bridgeIndex   = uint8(len(imagePalette) - 4)
-	mountainIndex = uint8(len(imagePalette) - 3)
-	glacierIndex  = uint8(len(imagePalette) - 2)
-	rockIndex     = uint8(len(imagePalette) - 1)
+	waterIndex    = uint8(len(imagePalette) - 2*allLevels - 5)
+	oceanIndex    = waterIndex + 1
+	holeIndex     = waterIndex + 2
+	bridgeIndex   = waterIndex + 3
+	rockIndex     = waterIndex + 4
+	mountainIndex = waterIndex + 5
+	glacierIndex  = mountainIndex + allLevels
 )
 
 // Image is the whole map, 1 pixel per cell: grass in its region's shade, darker on region borders, lighter or darker
-// with its height; water, the ocean, holes, bridges, mountains and glaciers in their colors; rocks over them, and
-// `void` transparent. Cells of a chunk with no row are `void`.
+// with its height, and mountains and glaciers too; water, the ocean, holes and bridges in their colors; rocks over
+// them, and `void` transparent. Cells of a chunk with no row are `void`.
 func Image(m Map) *image.Paletted {
 	grid := m.Grid()
 	img := image.NewPaletted(image.Rect(0, 0, m.Width, m.Height), imagePalette)
@@ -104,11 +119,25 @@ func cellIndex(m Map, grid core.Grid, cell core.Cell) uint8 {
 	case TileBridge:
 		return bridgeIndex
 	case TileMountain:
-		return mountainIndex
+		return mountainIndex + levelIndex(m.HeightAt(cell))
 	case TileGlacier:
-		return glacierIndex
+		return glacierIndex + levelIndex(m.HeightAt(cell))
 	}
 	return transparentIndex
+}
+
+// levelIndex is a height's place among a kind's shades, from MinHeight.
+func levelIndex(height int8) uint8 {
+	return uint8(int(height) - MinHeight)
+}
+
+// MountainColor and GlacierColor are their shades at a height, lighter going up.
+func MountainColor(height int8) color.NRGBA {
+	return imagePalette[mountainIndex+levelIndex(height)].(color.NRGBA)
+}
+
+func GlacierColor(height int8) color.NRGBA {
+	return imagePalette[glacierIndex+levelIndex(height)].(color.NRGBA)
 }
 
 // RegionColor is a region's shade at height 0, darker on a border. Region 0 is the grass green.

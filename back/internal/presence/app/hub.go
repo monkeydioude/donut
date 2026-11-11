@@ -39,7 +39,7 @@ func (h *Hub) Room(ctx context.Context, slug string) (*Room, error) {
 		h.log.DebugContext(ctx, "room not opened", "map", slug, "error", err)
 		return nil, fmt.Errorf("Room: %w", err)
 	}
-	room := NewRoom(world, h.now, h.log.With("map", slug))
+	room := NewRoom(slug, world, h.now, h.log.With("map", slug))
 	h.rooms[slug] = room
 	h.log.InfoContext(ctx, "room opened", "map", slug, "rooms", len(h.rooms))
 	go room.Run(h.ctx, domain.TickInterval)

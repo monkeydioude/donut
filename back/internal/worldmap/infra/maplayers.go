@@ -37,12 +37,20 @@ func groundLayer() layer {
 	}}
 }
 
-// heightLayer is a gray per level: 0 is mid-gray (128), and each level is 32 lighter or darker.
+// heightColors are the height layer's colors from MinHeight to MaxHeight (ADR 0011): blue to red from −3 to +3, like
+// a relief map, then purples above, where only mountains and glaciers go.
+var heightColors = [...]color.NRGBA{
+	{R: 0x1e, G: 0x3a, B: 0x8a, A: 0xff}, {R: 0x25, G: 0x63, B: 0xeb, A: 0xff}, {R: 0x38, G: 0xbd, B: 0xf8, A: 0xff},
+	{R: 0x4a, G: 0xde, B: 0x80, A: 0xff},
+	{R: 0xfa, G: 0xcc, B: 0x15, A: 0xff}, {R: 0xf9, G: 0x73, B: 0x16, A: 0xff}, {R: 0xdc, G: 0x26, B: 0x26, A: 0xff},
+	{R: 0xd8, G: 0xb4, B: 0xfe, A: 0xff}, {R: 0xa8, G: 0x55, B: 0xf7, A: 0xff}, {R: 0x6b, G: 0x21, B: 0xa8, A: 0xff},
+}
+
+// heightLayer is a color per level, from MinHeight to MaxHeight.
 func heightLayer() layer {
 	l := layer{file: heightFile, what: "a height"}
-	for level := domain.MinHeight; level <= domain.MaxHeight; level++ {
-		gray := uint8(0x80 + 0x20*level)
-		l.colors = append(l.colors, namedColor{fmt.Sprintf("height %d", level), color.NRGBA{R: gray, G: gray, B: gray, A: 0xff}})
+	for i, rgb := range heightColors {
+		l.colors = append(l.colors, namedColor{fmt.Sprintf("height %d", domain.MinHeight+i), rgb})
 	}
 	return l
 }

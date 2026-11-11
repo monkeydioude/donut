@@ -1,39 +1,44 @@
 package domain
 
 import (
-	"math"
+	core "donut/internal/core/domain"
 )
 
-// MountainOptions are the packs of bare rock on the summits (ADR 0009). Zero Cover: none.
+// MountainOptions are the massifs around the summits (ADR 0011). Zero Reach: none.
 type MountainOptions struct {
 	// Level is the height a summit's cells have, at least.
 	Level int8
-	// MinSummit is how many cells a summit needs to get a pack.
+	// MinSummit is how many cells a summit needs to seed a massif.
 	MinSummit int
-	// Cover is the share of a summit's cells the pack takes, about.
-	Cover float64
-	// Size is how many cells each blob of the pack has.
-	Size Span
+	// Reach is how far a massif grows from its summit, in steps, at most: its edge is ragged, from half of it.
+	Reach int
+	// FootLevel is the lowest ground a massif grows over.
+	FootLevel int8
+	// Clearance is how far from the spawn a massif stays, at least.
+	Clearance int
+	Spawn     core.Cell
 }
 
-// starterMountains: packs over about 60% of every summit of 4 cells or more at level 3.
-func starterMountains() MountainOptions {
-	return MountainOptions{Level: MaxHeight, MinSummit: 4, Cover: 0.6, Size: Span{Min: 3, Max: 10}}
+// starterMountains: massifs around every summit of 4 cells or more at level 3, up to 12 cells out and down to level
+// 1, 24 cells from the spawn at least.
+func starterMountains(spawn core.Cell) MountainOptions {
+	return MountainOptions{Level: MaxGroundHeight, MinSummit: 4, Reach: 12, FootLevel: 1, Clearance: 24, Spawn: spawn}
 }
 
-// packTriesPerCell bounds how many blobs a summit is tried for, per cell of it.
-const packTriesPerCell = 4
+// edgeWavelengths shape the noise that makes the edges of massifs and of the glacier ring ragged.
+var edgeWavelengths = []int{32, 16, 8}
 
-// raiseMountains puts a pack of mountains on each summit: the connected groups of grass cells at the level or
-// above. Blobs are grown on the summit's grass, from random cells of it, until the cover is reached. A cell keeps
-// its height: the pack is the hilltop itself.
+// raiseMountains grows a massif around each summit and raises it: each mountain cell's height is its ground's plus
+// its distance to the massif's edge, capped at MaxHeight.
 func (l *land) raiseMountains(o MountainOptions, rng Rng) {
-	if o.Cover <= 0 {
+	if o.Reach <= 0 {
 		return
 	}
-	for _, summit := range l.summits(o) {
-		l.raisePack(summit, o, rng)
+	ragged := fractalNoise(l.grid, edgeWavelengths, rng)
+	for _, i := range l.growMassifs(l.summits(o), o, ragged) {
+		l.ground[i] = TileMountain
 	}
+	l.raiseByDistance(TileMountain, func(i int) bool { return l.ground[i] != TileMountain }, func(steps int) int { return steps })
 }
 
 // summits are the connected groups of grass cells at the level or above, 8 neighbors, of at least MinSummit
@@ -68,22 +73,53 @@ func (l *land) connected(start int, seen []bool, in func(i int) bool) []int {
 	return cells
 }
 
-// raisePack grows blobs of mountain on a summit until about the cover of it is taken: each blob is cut to what's
-// left to take, and the pack stops when less than a blob's smallest size is left. A blob that can't reach that size
-// is dropped, so no mountain cell stands alone; a summit whose blobs can't grow stays under the cover.
-func (l *land) raisePack(summit []int, o MountainOptions, rng Rng) {
-	in := cellSet(summit)
-	target := int(math.Round(o.Cover * float64(len(summit))))
-	placed := 0
-	for tries := 0; placed+o.Size.Min <= target && tries < packTriesPerCell*len(summit); tries++ {
-		start := summit[int(rng.Float64()*float64(len(summit)))]
-		blob := l.growBlob(start, min(o.Size.pick(rng), target-placed), func(i int) bool { return in[i] && l.isGrass(i) }, rng)
-		if len(blob) < o.Size.Min {
+// growMassifs floods out from the summits, 8 neighbors, over grass at the foot level or above and away from the
+// spawn. A cell k cells away from the summit cell it was reached from, as the crow flies, joins when
+// k ≤ Reach × (0.5 + 0.5 × noise), the noise from −1 to 1, so the edges are round and ragged. A massif only grows from
+// its own cells, so it stays in one piece.
+func (l *land) growMassifs(summits [][]int, o MountainOptions, ragged []float64) []int {
+	can := func(i int) bool {
+		return l.isGrass(i) && l.height[i] >= o.FootLevel && distance(l.grid, pointOf(l.cellAt(i)), pointOf(o.Spawn)) >= float64(o.Clearance)
+	}
+	from := make([]int, len(l.ground))
+	for i := range from {
+		from[i] = -1
+	}
+	var massif []int
+	for _, summit := range summits {
+		for _, i := range summit {
+			if can(i) && from[i] < 0 {
+				from[i] = i
+				massif = append(massif, i)
+			}
+		}
+	}
+	for at := 0; at < len(massif); at++ {
+		source := from[massif[at]]
+		l.eachNeighbor(massif[at], func(j int) {
+			away := distance(l.grid, pointOf(l.cellAt(j)), pointOf(l.cellAt(source)))
+			if from[j] < 0 && can(j) && away <= float64(o.Reach)*(0.75+0.25*ragged[j]) {
+				from[j] = source
+				massif = append(massif, j)
+			}
+		})
+	}
+	return massif
+}
+
+// raiseByDistance raises each cell of a kind by rise(steps), steps being its distance (8 neighbors) to the closest
+// cell `edge` allows, capped at MaxHeight. A cell farther than the reach counted gets that reach's rise.
+func (l *land) raiseByDistance(kind TileKind, edge func(i int) bool, rise func(steps int) int) {
+	const reach = 4 * (MaxHeight - MinHeight + 1)
+	steps := make([]int8, len(l.ground))
+	l.measureStepsTo(edge, reach, steps)
+	for i, k := range steps {
+		if l.ground[i] != kind {
 			continue
 		}
-		for _, i := range blob {
-			l.ground[i] = TileMountain
+		if k < 0 {
+			k = reach
 		}
-		placed += len(blob)
+		l.height[i] = int8(min(MaxHeight, int(l.height[i])+rise(int(k))))
 	}
 }

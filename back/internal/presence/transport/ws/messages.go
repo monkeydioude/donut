@@ -65,6 +65,21 @@ type stoppedOut struct {
 	Row  int    `json:"row"`
 }
 
+// teleportedOut answers a teleport (ADR 0010): where the player stands now, and whether they can walk from there.
+type teleportedOut struct {
+	Type     string `json:"type"`
+	Col      int    `json:"col"`
+	Row      int    `json:"row"`
+	Walkable bool   `json:"walkable"`
+}
+
+// refusedOut tells a request wasn't done, and why (ADR 0010).
+type refusedOut struct {
+	Type    string `json:"type"`
+	Request string `json:"request"`
+	Reason  string `json:"reason"`
+}
+
 // chunkOut is a chunk coming into the player's range: its ground as indices into kinds, its heights and regions,
 // each cell row by row, and the objects on it.
 type chunkOut struct {
@@ -150,6 +165,10 @@ func encodeEvent(event domain.Event) any {
 		return walkingOut{Type: "walking", Path: toCellsOut(e.Path)}
 	case domain.Stopped:
 		return stoppedOut{Type: "stopped", Col: e.Cell.Col, Row: e.Cell.Row}
+	case domain.Teleported:
+		return teleportedOut{Type: "teleported", Col: e.Cell.Col, Row: e.Cell.Row, Walkable: e.Walkable}
+	case domain.Refused:
+		return refusedOut{Type: "refused", Request: e.Request, Reason: e.Reason}
 	case domain.ChunkShown:
 		return toChunkOut(e.Chunk)
 	case domain.ChunkForgotten:
@@ -166,26 +185,37 @@ func logged(event domain.Event, message any) any {
 	return message
 }
 
-// request is what a client asks: "plan" or "walk", toward a cell.
+// request is what a client asks: "plan" or "walk" toward a cell, or "teleport" to a cell of a map (ADR 0010).
 type request struct {
-	kind string
-	to   core.Cell
+	kind  string
+	to    core.Cell
+	toMap string
 }
 
 type requestIn struct {
-	Type string `json:"type"`
-	Col  *int   `json:"col"`
-	Row  *int   `json:"row"`
+	Type string  `json:"type"`
+	Map  *string `json:"map"`
+	Col  *int    `json:"col"`
+	Row  *int    `json:"row"`
 }
 
-// decodeRequest reads a plan or walk message. Anything else, or bad JSON, is not a request.
+// decodeRequest reads a plan, walk or teleport message. Anything else, bad JSON, a missing field or a cell that
+// isn't a whole number is not a request.
 func decodeRequest(data []byte) (request, bool) {
 	var msg requestIn
 	if err := json.Unmarshal(data, &msg); err != nil || msg.Col == nil || msg.Row == nil {
 		return request{}, false
 	}
-	if msg.Type != "plan" && msg.Type != "walk" {
-		return request{}, false
+	req := request{kind: msg.Type, to: core.Cell{Col: *msg.Col, Row: *msg.Row}}
+	switch msg.Type {
+	case "plan", "walk":
+		return req, true
+	case "teleport":
+		if msg.Map == nil {
+			return request{}, false
+		}
+		req.toMap = *msg.Map
+		return req, true
 	}
-	return request{kind: msg.Type, to: core.Cell{Col: *msg.Col, Row: *msg.Row}}, true
+	return request{}, false
 }

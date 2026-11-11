@@ -118,13 +118,24 @@ func TestImageTerrain(t *testing.T) {
 	}
 	img := domain.Image(m)
 
-	t.Run("water, the ocean, holes, bridges, mountains and glaciers have their colors", func(t *testing.T) {
+	t.Run("water, the ocean, holes and bridges have their colors; mountains and glaciers theirs at their level", func(t *testing.T) {
 		assert.Equal(t, domain.WaterBlue, at(img, 5, 5))
 		assert.Equal(t, domain.HoleDark, at(img, 6, 5))
 		assert.Equal(t, domain.BridgeBrown, at(img, 7, 5))
 		assert.Equal(t, domain.OceanBlue, at(img, 8, 5), "the ocean (ADR 0008)")
-		assert.Equal(t, domain.MountainGray, at(img, 9, 5), "a mountain (ADR 0009)")
-		assert.Equal(t, domain.GlacierIce, at(img, 10, 5), "a glacier (ADR 0009)")
+		assert.Equal(t, domain.MountainGray, at(img, 9, 5), "a mountain at 0 (ADR 0011)")
+		assert.Equal(t, domain.GlacierShade, at(img, 10, 5), "a glacier at 0 (ADR 0011)")
+	})
+
+	// ADR 0011 test 7
+	t.Run("mountains and glaciers are lighter going up", func(t *testing.T) {
+		brightness := func(c color.NRGBA) int { return int(c.R) + int(c.G) + int(c.B) }
+		assert.Greater(t, brightness(domain.MountainColor(6)), brightness(domain.MountainColor(2)))
+		assert.Greater(t, brightness(domain.GlacierColor(4)), brightness(domain.GlacierColor(0)))
+		tall := stripes(false)
+		tall.SetGround(cell(3, 3), domain.TileMountain)
+		tall.SetHeight(cell(3, 3), 6)
+		assert.Equal(t, domain.MountainColor(6), at(domain.Image(tall), 3, 3))
 	})
 
 	t.Run("grass is lighter going up and darker going down, in the same region", func(t *testing.T) {
@@ -139,6 +150,6 @@ func TestImageTerrain(t *testing.T) {
 
 	t.Run("it stays a paletted PNG, of at most 256 colors", func(t *testing.T) {
 		assert.LessOrEqual(t, len(img.Palette), 256)
-		assert.Len(t, img.Palette, 190)
+		assert.Len(t, img.Palette, 208)
 	})
 }

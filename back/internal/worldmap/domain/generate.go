@@ -22,7 +22,7 @@ type GenerateOptions struct {
 	// come first, then each island's, then the oceans'; without, as many regions are cut over the whole map.
 	// None: no regions.
 	RegionNames []string
-	// Relief, Landmasses, Water, Holes, Mountains and Glaciers shape the ground (ADR 0007, ADR 0008, ADR 0009). Their
+	// Relief, Landmasses, Water, Holes, Mountains and Glaciers shape the ground (ADR 0007, ADR 0008, ADR 0011). Their
 	// zero values leave it flat grass.
 	Relief     ReliefOptions
 	Landmasses LandmassOptions
@@ -53,8 +53,8 @@ func starterRegionNames() []string {
 
 // StarterWorld is the world the starter map file is generated from: the surface of the donut, 2048 cells around the
 // ring and 1024 around the tube, wrapping both ways (ADR 0003): three continents and six islands in an ocean, with
-// hills, lakes, rivers and holes (ADR 0007, ADR 0008), mountains on the summits and glaciers at the inner ridge
-// (ADR 0009).
+// hills, lakes, rivers and holes (ADR 0007, ADR 0008), massifs around the summits and the glacier ring at the inner
+// ridge (ADR 0011).
 func StarterWorld() GenerateOptions {
 	const width, height = 2048, 1024
 	// the spawn is the walkable cell closest to the center: the first continent is centered on it, and a river
@@ -64,13 +64,13 @@ func StarterWorld() GenerateOptions {
 		Slug: "world", Name: "World", Width: width, Height: height, Wraps: true,
 		RockChance: 0.12, RegionNames: starterRegionNames(),
 		Relief: starterRelief(), Landmasses: starterLandmasses(), Water: starterWater(center), Holes: starterHoles(),
-		Mountains: starterMountains(), Glaciers: starterGlaciers(center),
+		Mountains: starterMountains(center), Glaciers: starterGlaciers(center),
 	}
 }
 
 // Generate makes a map from its options. The same rng sequence gives the same map: the landmasses are shaped first,
-// then the relief, the lakes, the rivers, the bridges, the holes, the mountains, the glaciers, each cell's rock, row
-// by row, and the regions.
+// then the relief, the lakes, the rivers, the bridges, the holes, the massifs, the glacier ring, each cell's rock,
+// row by row, and the regions.
 func Generate(opts GenerateOptions, rng Rng) Map {
 	summary := Summary{Slug: opts.Slug, Name: opts.Name, Width: opts.Width, Height: opts.Height, Wraps: opts.Wraps}
 	m := NewMap(summary, TileGrass)

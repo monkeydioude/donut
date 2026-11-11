@@ -1,6 +1,6 @@
 # ADR 0009: Mountains on the summits and glaciers at the inner ridge
 
-- Status: accepted, 2026-11-11
+- Status: accepted, 2026-11-11; its mountains, glaciers and their drawing replaced by ADR 0011
 - Replaces nothing. Adds to ADR 0007 and ADR 0008.
 
 ## Context

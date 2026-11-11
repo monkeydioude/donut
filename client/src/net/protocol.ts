@@ -26,7 +26,11 @@ export type ServerMessage =
   | { type: 'left'; id: string }
   | { type: 'planned'; col: number; row: number; path: Cell[] }
   | { type: 'walking'; path: Cell[] }
-  | { type: 'stopped'; col: number; row: number };
+  | { type: 'stopped'; col: number; row: number }
+  /** You were teleported there, walkable or not (ADR 0010). */
+  | { type: 'teleported'; col: number; row: number; walkable: boolean }
+  /** A request wasn't done, and why, in words to show (ADR 0010). */
+  | { type: 'refused'; request: string; reason: string };
 
 export interface Guest {
   id: string;
@@ -53,6 +57,11 @@ export function encodePlan(to: Cell): string {
 /** Asks the server to walk your player to a cell. */
 export function encodeWalk(to: Cell): string {
   return JSON.stringify({ type: 'walk', col: to.col, row: to.row });
+}
+
+/** Asks the server to put your player on a cell of a map (ADR 0010). */
+export function encodeTeleport(map: string, to: Cell): string {
+  return JSON.stringify({ type: 'teleport', map, col: to.col, row: to.row });
 }
 
 /** The websocket address of a map, on the page's own host (Vite proxies it to the back in dev). */
@@ -82,6 +91,14 @@ function decodeByType(json: Record<string, unknown>): ServerMessage | null {
       return isPath(json.path) ? { type: 'walking', path: json.path } : null;
     case 'stopped':
       return isCell(json) ? { type: 'stopped', col: json.col, row: json.row } : null;
+    case 'teleported': {
+      const { walkable } = json;
+      return isCell(json) && typeof walkable === 'boolean' ? { type: 'teleported', col: json.col, row: json.row, walkable } : null;
+    }
+    case 'refused': {
+      const { request, reason } = json;
+      return typeof request === 'string' && typeof reason === 'string' ? { type: 'refused', request, reason } : null;
+    }
     case 'chunk':
       return decodeChunk(json);
     case 'forget':
@@ -91,7 +108,7 @@ function decodeByType(json: Record<string, unknown>): ServerMessage | null {
   }
 }
 
-/** A chunk: its ground as indices into its kinds, its heights (−3 to 3) and regions, 1,024 each, and the objects on it. */
+/** A chunk: its ground as indices into its kinds, its heights (−3 to 6) and regions, 1,024 each, and the objects on it. */
 function decodeChunk(json: Json): ServerMessage | null {
   const { version, kinds, ground, height, region, objects } = json;
   if (!isChunkKey(json) || !isInt(version) || version < 1) return null;

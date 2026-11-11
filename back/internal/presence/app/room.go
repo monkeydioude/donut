@@ -37,7 +37,9 @@ type World interface {
 // Room is the players on one map. The server walks their paths, a step at a time, and tells each player what happens
 // on the chunks they hold (ADR 0003). It is safe for concurrent use.
 type Room struct {
-	mu      sync.Mutex
+	mu sync.Mutex
+	// slug names the room's map: a teleport to another map is refused (ADR 0010).
+	slug    string
 	world   World
 	now     func() time.Time
 	log     *slog.Logger
@@ -59,8 +61,8 @@ type member struct {
 	limiter    domain.RequestLimiter
 }
 
-func NewRoom(world World, now func() time.Time, log *slog.Logger) *Room {
-	return &Room{world: world, now: now, log: log, members: map[string]*member{}, lastCells: map[string]core.Cell{}}
+func NewRoom(slug string, world World, now func() time.Time, log *slog.Logger) *Room {
+	return &Room{slug: slug, world: world, now: now, log: log, members: map[string]*member{}, lastCells: map[string]core.Cell{}}
 }
 
 // Run ticks the room every `every` until ctx ends.
@@ -228,12 +230,42 @@ func (r *Room) step(walker *member, now time.Time) {
 		r.log.Debug("step: arrived", "player", walker.player.ID, "cell", next)
 	}
 	r.send(walker, domain.Moved{ID: walker.player.ID, Cell: next})
-	if core.ChunkOf(from) != core.ChunkOf(next) {
-		r.followWalker(walker)
+	r.arrived(walker, from)
+}
+
+// Teleport puts the player on a cell of this map, walkable or not, and drops their walk (ADR 0010). Another map, or
+// a cell outside this one, is refused with why. Then everything goes as after a step: their chunks follow them, and
+// the others see them go or come.
+func (r *Room) Teleport(id string, client Client, toMap string, to core.Cell) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.dropSlow()
+
+	mover := r.requester(id, client, "teleport", to)
+	if mover == nil {
+		return
+	}
+	if err := domain.CheckTeleport(r.slug, r.world.Grid(), toMap, to); err != nil {
+		r.log.Debug("teleport: refused", "player", id, "map", toMap, "to", to, "reason", err)
+		r.send(mover, domain.Refused{Request: "teleport", Reason: err.Error()})
+		return
+	}
+	from, walkable := mover.player.Cell, r.world.IsWalkable(to)
+	r.log.Debug("teleport: done", "player", id, "from", from, "to", to, "walkable", walkable, "dropped_steps", len(mover.path))
+	mover.player.Cell, mover.path = to, nil
+	r.send(mover, domain.Teleported{Cell: to, Walkable: walkable})
+	r.arrived(mover, from)
+}
+
+// arrived follows a member who just moved from `from`: their chunks when the chunk changed, then what each other
+// player sees of the move.
+func (r *Room) arrived(mover *member, from core.Cell) {
+	if core.ChunkOf(from) != core.ChunkOf(mover.player.Cell) {
+		r.followWalker(mover)
 	}
 	for id, other := range r.members {
-		if id != walker.player.ID {
-			r.tellStep(other, walker, from)
+		if id != mover.player.ID {
+			r.tellStep(other, mover, from)
 		}
 	}
 }

@@ -38,7 +38,8 @@ func (c *fakeClient) take() []domain.Event {
 }
 
 // fakeWorld is an open map with rocks that tests may add: 5 x 5 by default. Its paths go straight toward the target,
-// diagonally first, across the seams of a wrapping map, and there is none when a rock is in the way.
+// diagonally first, across the seams of a wrapping map, and there is none when a rock is in the way, nor from a rock:
+// like the real terrain, a path needs a walkable start.
 type fakeWorld struct {
 	grid  core.Grid
 	rocks map[core.Cell]bool
@@ -54,6 +55,9 @@ func (w *fakeWorld) IsWalkable(c core.Cell) bool {
 func (w *fakeWorld) SpawnPoint() (core.Cell, error) { return w.spawn, nil }
 
 func (w *fakeWorld) Path(from, to core.Cell) []core.Cell {
+	if !w.IsWalkable(from) {
+		return nil
+	}
 	var path []core.Cell
 	for at := from; at != to; {
 		d := w.grid.Offset(at, to)
@@ -115,7 +119,7 @@ func newWorldOn(grid core.Grid, rocks ...core.Cell) world {
 	for _, rock := range rocks {
 		fake.rocks[rock] = true
 	}
-	return world{room: app.NewRoom(fake, clock.now, logs.Discard()), clock: clock, world: fake}
+	return world{room: app.NewRoom("world", fake, clock.now, logs.Discard()), clock: clock, world: fake}
 }
 
 // tickAfter moves the clock forward, then ticks the room.

@@ -16,6 +16,11 @@ describe('groundCenterAt', () => {
     expect(groundCenterAt(heights, { col: 5, row: 5 }, 2)).toEqual({ x: 0, y: 80 - 16 });
     expect(groundCenterAt(heights, { col: 5, row: 5 }, -1)).toEqual({ x: 0, y: 88 });
   });
+
+  // ADR 0011 test 9
+  it('draws a cell at +6 48 px higher than at 0', () => {
+    expect(groundCenterAt(heights, { col: 5, row: 5 }, 6)).toEqual({ x: 0, y: 80 - 48 });
+  });
 });
 
 // ADR 0007 test 29
@@ -30,6 +35,12 @@ describe('pickOnHeights', () => {
     const raised = groundCenterAt(heights, { col: 5, row: 5 }, 2);
     expect(projection.toTile(raised)).toEqual({ col: 4, row: 4 });
     expect(pickOnHeights(heights, raised, heightsOf({ '5,5': 2 }))).toEqual({ col: 5, row: 5 });
+  });
+
+  // ADR 0011 test 9
+  it('over a cell at +6, its top picks it', () => {
+    const raised = groundCenterAt(heights, { col: 5, row: 5 }, 6);
+    expect(pickOnHeights(heights, raised, heightsOf({ '5,5': 6 }))).toEqual({ col: 5, row: 5 });
   });
 
   it('over the face of a raised cell, that cell', () => {

@@ -26,9 +26,11 @@ export function applyMessage(state: PlayersState, message: ServerMessage): Playe
     case 'left':
       return withPlayers(state, (players) => players.delete(message.id));
     case 'stopped':
+    case 'teleported':
       return state.you ? moveTo(state, state.you, message.col, message.row) : state;
     case 'planned':
     case 'walking':
+    case 'refused':
     case 'chunk':
     case 'forget':
       return state;

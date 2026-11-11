@@ -1,68 +1,64 @@
-import { cellFraction, depthFromEdge, type Edge } from './edges';
-import { createPixelBuffer, forEachPixel, setPixel, type PixelBuffer } from './pixelBuffer';
-import { groundCenter, isOnGround, textureSize, type TileFrame } from './tileFrame';
+import type { TilePoint } from '../iso/projection';
+import { forEachBlockPixel, isOnEdge, shadeIndex, type BlockPixel, type BlockShape } from './block';
+import type { FaceSide } from './cliff';
+import type { Edge } from './edges';
+import { facetAt, patternPoint, scatteredSeeds } from './facets';
+import { GLACIER_COLORS, iceTopColor } from './glacier';
+import { createPixelBuffer, setPixel, type PixelBuffer } from './pixelBuffer';
+import { textureSize, type TileFrame } from './tileFrame';
 
-export const MOUNTAIN_COLORS = { top: 0x8a8694, crack: 0x6b6775, outline: 0x4f4a57, peakLit: 0xaca8b4, peakDark: 0x736f7d, snow: 0xf2f4f7 } as const;
+/** The rock's top from its darkest shade to its lightest, lit by how its slope faces the light. */
+export const MOUNTAIN_COLORS = {
+  top: [0x6c6879, 0x7f7b8c, 0x938fa0, 0xa8a4b4],
+  side: { left: [0x8a8694, 0x807c8b], right: [0x736f7d, 0x6a6674] },
+  crack: 0x5f5a6b,
+  outline: 0x4f4a57,
+} as const;
 
-/** How high the peak rises over the ground diamond's top, as a share of the tile's width: the frame's headroom. */
-const PEAK_SHARE = 0.2;
-/** How many rows of the peak, from its apex, are snow. */
-const SNOW_PX = 3;
-/** The peak's base, on the ground center's row, spans this share of the tile's width. */
-const PEAK_BASE = 0.5;
-/** Short cracks across the top: where they are along the rows, how far along the columns they start. */
-const CRACK_LANES = [
-  { row: -0.3, offset: 0.2 },
-  { row: 0.15, offset: 0.6 },
-] as const;
-const CRACK = { halfThickness: 0.035, length: 0.3 } as const;
+/** The rock's facets: 6 × 6 over the 8 × 8 cells of its pattern, a darker one for half of them. */
+const ROCK_SEEDS = scatteredSeeds(6, 2, 11);
+/** How close to a facet's border, in cells, a crack is. */
+const CRACK = 0.06;
 
-/** The headroom a mountain's frame needs for its peak. */
-export function peakHeadroom(tileWidth: number): number {
-  return Math.max(2, Math.round(tileWidth * PEAK_SHARE));
+/** How a mountain cell looks (ADR 0011): its place in the pattern, its outlined edges, its shape, an icy top. */
+export interface MountainLook {
+  place: TilePoint;
+  outline: readonly Edge[];
+  shape: BlockShape;
+  /** The tops at +6 are drawn in ice: cosmetic, still a mountain. */
+  iced: boolean;
 }
 
 /**
- * A mountain tile (ADR 0009): a gray stone top with darker cracks, the same on every cell so a pack reads as one
- * massif, a dark outline on the edges given, toward cells that aren't mountain, and a peak rising from the cell's
- * middle to the top of the frame's headroom: a triangle, lit on its left, dark on its right, snow on top.
+ * A mountain tile (ADR 0011): one block of a merged massif. Its top leans up to the higher rock behind, or rises to a
+ * point on a peak, gray-purple rock lit by how it faces the light, in large facets with cracks between them laid on
+ * the map so neighbors join, a dark outline on the edges given. Its sides are stone, the cracks running down them.
  */
-export function paintMountain(frame: TileFrame, outline: readonly Edge[]): PixelBuffer {
+export function paintMountain(frame: TileFrame, look: MountainLook, levelPx: number): PixelBuffer {
   const { width, height } = textureSize(frame);
   const buffer = createPixelBuffer(width, height);
-  forEachPixel(width, height, (x, y) => {
-    if (isOnGround(frame, x, y)) setPixel(buffer, x, y, topColor(frame, x, y, outline));
-  });
-  forEachPixel(width, height, (x, y) => {
-    const peak = peakColor(frame, x, y);
-    if (peak !== null) setPixel(buffer, x, y, peak);
-  });
+  forEachBlockPixel(frame, look.shape, levelPx, (x, y, pixel) => setPixel(buffer, x, y, mountainColor(look, pixel)));
   return buffer;
 }
 
-function topColor(frame: TileFrame, x: number, y: number, outline: readonly Edge[]): number {
-  if (outline.some((edge) => depthFromEdge(frame, edge, x, y) < 1)) return MOUNTAIN_COLORS.outline;
-  return isCrack(cellFraction(frame, x, y)) ? MOUNTAIN_COLORS.crack : MOUNTAIN_COLORS.top;
+function mountainColor(look: MountainLook, pixel: BlockPixel): number {
+  const point = patternPoint(look.place, pixel.at);
+  if (pixel.part === 'side') return sideColor(point, pixel.side);
+  if (isOnEdge(pixel.at, look.outline)) return look.iced ? GLACIER_COLORS.edge : MOUNTAIN_COLORS.outline;
+  return look.iced ? iceTopColor(point, pixel.light) : rockTopColor(point, pixel.light);
 }
 
-function isCrack(at: { col: number; row: number }): boolean {
-  return CRACK_LANES.some((lane) => Math.abs(at.row - lane.row) < CRACK.halfThickness && fraction(at.col - lane.offset) < CRACK.length);
+/** The rock at a point: its light's shade, one darker on half the facets, cracks on their borders. */
+function rockTopColor(point: TilePoint, light: number): number {
+  const facet = facetAt(ROCK_SEEDS, point);
+  if (facet.border < CRACK) return MOUNTAIN_COLORS.crack;
+  const shade = Math.max(0, shadeIndex(light, MOUNTAIN_COLORS.top.length) - facet.seed.shade);
+  return MOUNTAIN_COLORS.top[shade] ?? MOUNTAIN_COLORS.top[0];
 }
 
-function fraction(value: number): number {
-  return value - Math.floor(value);
-}
-
-/**
- * The peak's color at a pixel, null off it. The peak is a triangle from the texture's top row, 2 pixels wide there,
- * down to the ground center's row, where it spans PEAK_BASE of the tile.
- */
-function peakColor(frame: TileFrame, x: number, y: number): number | null {
-  const center = groundCenter(frame);
-  if (y + 0.5 > center.y) return null;
-  const halfWidth = 1 + ((frame.tileWidth * PEAK_BASE) / 2 - 1) * ((y + 0.5) / center.y);
-  const dx = x + 0.5 - center.x;
-  if (Math.abs(dx) > halfWidth) return null;
-  if (y < SNOW_PX) return MOUNTAIN_COLORS.snow;
-  return dx < 0 ? MOUNTAIN_COLORS.peakLit : MOUNTAIN_COLORS.peakDark;
+/** A side under the top's front edge: its facet's stone, darker for half of them, the cracks running straight down. */
+function sideColor(point: TilePoint, side: FaceSide): number {
+  const facet = facetAt(ROCK_SEEDS, point);
+  if (facet.border < CRACK) return MOUNTAIN_COLORS.crack;
+  return MOUNTAIN_COLORS.side[side][facet.seed.shade] ?? MOUNTAIN_COLORS.side[side][0];
 }

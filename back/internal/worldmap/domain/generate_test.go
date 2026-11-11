@@ -89,7 +89,7 @@ func TestGenerate(t *testing.T) {
 
 // ADR 0008 test 4
 func TestGeneratedLandmasses(t *testing.T) {
-	m := starter()
+	m := bare()
 	land := bodies(m, isLand)
 	cells := m.Width * m.Height
 
@@ -133,7 +133,7 @@ func TestGeneratedLandmasses(t *testing.T) {
 
 // ADR 0007 test 8 and ADR 0008 test 5
 func TestGeneratedRelief(t *testing.T) {
-	m := starter()
+	m := bare()
 	grid := m.Grid()
 	toOcean := stepsFrom(m, func(c core.Cell) bool { return m.GroundAt(c) == domain.TileOcean })
 	perLevel := map[int8]int{}
@@ -141,7 +141,7 @@ func TestGeneratedRelief(t *testing.T) {
 	coast, inland := levelSum{}, levelSum{}
 	eachCell(m, func(c core.Cell) {
 		h := m.HeightAt(c)
-		require.True(t, h >= domain.MinHeight && h <= domain.MaxHeight, "%v at %d", c, h)
+		require.True(t, h >= domain.MinHeight && h <= domain.MaxGroundHeight, "%v at %d", c, h)
 		for _, n := range neighborsOf(grid, c) {
 			if absInt(int(h)-int(m.HeightAt(n))) > 1 {
 				require.Fail(t, "a cliff", "%v at %d next to %v at %d", c, h, n, m.HeightAt(n))
@@ -160,7 +160,7 @@ func TestGeneratedRelief(t *testing.T) {
 		}
 	})
 	assert.InDelta(t, 0.5, float64(perLevel[0])/float64(landCells), 0.1, "about half the land at 0: %v", perLevel)
-	for _, end := range []int8{domain.MinHeight, domain.MaxHeight} {
+	for _, end := range []int8{domain.MinHeight, domain.MaxGroundHeight} {
 		assert.Positive(t, perLevel[end], "some cells at %d", end)
 		assert.Less(t, float64(perLevel[end])/float64(landCells), 0.05, "few cells at %d", end)
 	}
@@ -169,13 +169,13 @@ func TestGeneratedRelief(t *testing.T) {
 
 // ADR 0008 test 6
 func TestGeneratedBanks(t *testing.T) {
-	m := starter()
+	m := bare()
 	grid := m.Grid()
 	eachCell(m, func(c core.Cell) {
 		if !isLand(m.GroundAt(c)) {
 			return
 		}
-		lowest, highest, water := int8(domain.MaxHeight), int8(domain.MinHeight), false
+		lowest, highest, water := int8(domain.MaxGroundHeight), int8(domain.MinHeight), false
 		for _, n := range neighborsOf(grid, c) {
 			if kind := m.GroundAt(n); kind == domain.TileWater || kind == domain.TileOcean {
 				water = true
@@ -191,7 +191,7 @@ func TestGeneratedBanks(t *testing.T) {
 
 // ADR 0008 tests 7 and 8
 func TestGeneratedLakesAndRivers(t *testing.T) {
-	m := starter()
+	m := bare()
 	grid := m.Grid()
 	waters := bodies(m, isFreshWater)
 	var lakes, rivers [][]core.Cell
@@ -370,7 +370,7 @@ func TestGeneratedRocks(t *testing.T) {
 
 // ADR 0008 test 11
 func TestGeneratedRegions(t *testing.T) {
-	m := starter()
+	m := bare()
 	grid := m.Grid()
 	// each landmass is numbered; islets and the ocean aren't
 	massOf := make([]int, m.Width*m.Height)
@@ -597,8 +597,9 @@ func absInt(n int) int {
 	return n
 }
 
-// bare is the starter world of seed 42 without its mountains and glaciers: its ground and heights are the same,
-// but for the cells they replaced. Rocks and regions differ: they are drawn after them.
+// bare is the starter world of seed 42 without its massifs and glacier ring: the land as ADR 0008 makes it, whose
+// rules hold before the freeze. Its ground and heights are the starter's, but for the cells the massifs and the ring
+// took. Rocks and regions differ: they are drawn after them.
 var bare = sync.OnceValue(func() domain.Map {
 	opts := domain.StarterWorld()
 	opts.Mountains, opts.Glaciers = domain.MountainOptions{}, domain.GlacierOptions{}
@@ -616,82 +617,86 @@ func cellsOf(m domain.Map, kind domain.TileKind) []core.Cell {
 	return cells
 }
 
-// ADR 0009 test 3
-func TestGeneratedMountains(t *testing.T) {
+// ADR 0011 test 5
+func TestGeneratedMassifsAndRing(t *testing.T) {
 	m := starter()
 	grid := m.Grid()
-	mountains := cellsOf(m, domain.TileMountain)
-	require.NotEmpty(t, mountains)
-
-	t.Run("every one at level 3, touching another", func(t *testing.T) {
-		for _, c := range mountains {
-			require.Equal(t, int8(domain.MaxHeight), m.HeightAt(c), "the mountain at %v", c)
-			touches := false
-			for _, n := range neighborsOf(grid, c) {
-				touches = touches || m.GroundAt(n) == domain.TileMountain
-			}
-			require.True(t, touches, "the mountain at %v is alone", c)
-		}
-	})
-
-	t.Run("packs cover 40 to 75% of the summits of 4 cells or more", func(t *testing.T) {
-		onSummit := func(c core.Cell) bool {
-			kind := m.GroundAt(c)
-			return (kind == domain.TileGrass || kind == domain.TileMountain) && m.HeightAt(c) == domain.MaxHeight
-		}
-		covered, total := 0, 0
-		for _, summit := range bodiesWithin(m, nil, onSummit) {
-			if len(summit) < 4 {
-				continue
-			}
-			total += len(summit)
-			for _, c := range summit {
-				if m.GroundAt(c) == domain.TileMountain {
-					covered++
-				}
-			}
-		}
-		require.Positive(t, total)
-		assert.InDelta(t, 0.575, float64(covered)/float64(total), 0.175, "%d of %d summit cells", covered, total)
-	})
-}
-
-// ADR 0009 test 4
-func TestGeneratedGlaciers(t *testing.T) {
-	m := starter()
-	grid := m.Grid()
-	glaciers := cellsOf(m, domain.TileGlacier)
-	require.NotEmpty(t, glaciers)
 	spawn := spawnOf(t, m)
 	ridge := m.Height / 2
-	near, far := 0, 0
-	for _, c := range glaciers {
-		d := absInt(c.Row - ridge)
-		require.LessOrEqual(t, d, 80, "the glacier at %v is outside the cold band", c)
-		offset := grid.Offset(spawn, c)
-		require.GreaterOrEqual(t, math.Hypot(float64(offset.Col), float64(offset.Row)), 48.0, "the glacier at %v is close to the spawn %v", c, spawn)
-		switch {
-		case d <= 20:
-			near++
-		case d > 60:
-			far++
+	inPass := func(c core.Cell) bool { return absInt(grid.Offset(spawn, c).Col) <= 48 }
+
+	t.Run("only mountains and glaciers rise above +3", func(t *testing.T) {
+		eachCell(m, func(c core.Cell) {
+			if h := m.HeightAt(c); h > domain.MaxGroundHeight {
+				require.True(t, m.GroundAt(c).RisesAboveGround(), "%v at %d is %v", c, h, m.GroundAt(c))
+			}
+		})
+		assert.NotEmpty(t, cellsOf(m, domain.TileMountain))
+	})
+
+	t.Run("the core is glacier, holes and mountains outside the pass; the edge is ragged; nothing freezes past 64 rows", func(t *testing.T) {
+		edgeIce, edgeOther := 0, 0
+		eachCell(m, func(c core.Cell) {
+			kind, r := m.GroundAt(c), absInt(c.Row-ridge)
+			switch {
+			case kind == domain.TileGlacier:
+				require.LessOrEqual(t, r, 64, "the glacier at %v", c)
+				require.False(t, inPass(c), "the glacier at %v is in the pass", c)
+			case r <= 40 && !inPass(c):
+				require.True(t, kind == domain.TileHole || kind == domain.TileMountain, "%v at %v, in the core", kind, c)
+			}
+			if r > 40 && r <= 64 && !inPass(c) {
+				if kind == domain.TileGlacier {
+					edgeIce++
+				} else {
+					edgeOther++
+				}
+			}
+		})
+		assert.Positive(t, edgeIce, "some of the edge is glacier")
+		assert.Positive(t, edgeOther, "some of the edge isn't")
+	})
+
+	t.Run("no mountain within 24 cells of the spawn", func(t *testing.T) {
+		for _, c := range cellsOf(m, domain.TileMountain) {
+			offset := grid.Offset(spawn, c)
+			require.GreaterOrEqual(t, math.Hypot(float64(offset.Col), float64(offset.Row)), 24.0, "the mountain at %v", c)
 		}
-	}
-	assert.Greater(t, near, far, "denser on the ridge: %d cells within 20 rows, %d past 60", near, far)
+	})
+
+	t.Run("from the spawn, a path leaves the ring on both sides, through the pass", func(t *testing.T) {
+		terrain := domain.NewTerrain(m).WithSearchLimit(m.Width * m.Height)
+		for _, side := range []int{-1, 1} {
+			target, found := core.Cell{}, false
+			for r := 70; r < 200 && !found; r++ {
+				target = core.Cell{Col: spawn.Col, Row: ridge + side*r}
+				found = terrain.IsWalkable(target)
+			}
+			require.True(t, found, "a walkable cell past the ring, side %d", side)
+			assert.NotEmpty(t, terrain.Path(spawn, target), "from %v to %v", spawn, target)
+		}
+	})
 }
 
-// ADR 0009 test 5
-func TestMountainsAndGlaciersReplaceGrassOnly(t *testing.T) {
-	m, flat := starter(), bare()
-	assert.Empty(t, cellsOf(flat, domain.TileMountain))
-	assert.Empty(t, cellsOf(flat, domain.TileGlacier))
+// ADR 0011 test 6
+func TestMassifsAndRingOnlyReplaceCells(t *testing.T) {
+	m, before := starter(), bare()
+	assert.Empty(t, cellsOf(before, domain.TileMountain))
+	assert.Empty(t, cellsOf(before, domain.TileGlacier))
 	eachCell(m, func(c core.Cell) {
-		require.Equal(t, flat.HeightAt(c), m.HeightAt(c), "the height at %v", c)
+		was := before.GroundAt(c)
 		switch kind := m.GroundAt(c); kind {
-		case domain.TileMountain, domain.TileGlacier:
-			require.Equal(t, domain.TileGrass, flat.GroundAt(c), "%v at %v was grass", kind, c)
+		case domain.TileMountain:
+			require.Equal(t, domain.TileGrass, was, "the mountain at %v was grass", c)
+			require.GreaterOrEqual(t, before.HeightAt(c), int8(1), "the mountain at %v was at level 1 or above", c)
+			require.Greater(t, m.HeightAt(c), before.HeightAt(c), "the mountain at %v rose", c)
+		case domain.TileGlacier:
+			frozen := was == domain.TileGrass || was == domain.TileWater || was == domain.TileOcean || was == domain.TileBridge
+			require.True(t, frozen, "the glacier at %v was %v", c, was)
+			require.Greater(t, m.HeightAt(c), before.HeightAt(c), "the glacier at %v rose", c)
 		default:
-			require.Equal(t, flat.GroundAt(c), kind, "the ground at %v", c)
+			require.Equal(t, was, kind, "the ground at %v", c)
+			require.Equal(t, before.HeightAt(c), m.HeightAt(c), "the height at %v", c)
 		}
 	})
 }

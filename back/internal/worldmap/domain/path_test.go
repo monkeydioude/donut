@@ -247,6 +247,12 @@ func TestStepsOnHeights(t *testing.T) {
 	}
 }
 
+// ADR 0010 test 3: a player teleported onto an unwalkable cell can't walk off it.
+func TestNoPathFromAnUnwalkableCell(t *testing.T) {
+	terrain := domain.NewTerrain(drawnMap("m00"))
+	assert.Nil(t, terrain.Path(cell(0, 0), cell(2, 0)))
+}
+
 // ADR 0009 test 2
 func TestPathsGoAroundMountainsAndGlaciers(t *testing.T) {
 	terrain := domain.NewTerrain(drawnMap(

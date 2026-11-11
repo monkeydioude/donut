@@ -16,9 +16,12 @@ const (
 	MinWrappingSize = 5 * core.ChunkSize
 	// MaxRegions is how many regions a map may have: a cell holds its region's id in one byte, 0 for none.
 	MaxRegions = 255
-	// MinHeight and MaxHeight bound a cell's height, in levels (ADR 0007).
+	// MinHeight and MaxHeight bound a cell's height, in levels (ADR 0007, ADR 0011). Above MaxGroundHeight, only
+	// mountains and glaciers.
 	MinHeight = -3
-	MaxHeight = 3
+	MaxHeight = 6
+	// MaxGroundHeight is as high as the walkable terrain goes: the relief, the water, the banks and the bridges.
+	MaxGroundHeight = 3
 )
 
 // TileKind is what the ground of a cell is made of. Its value is its code in the stored chunks.
@@ -36,9 +39,9 @@ const (
 	TileBridge
 	// TileOcean is the sea (ADR 0008): drawn still, not walkable. Rivers and lakes are TileWater.
 	TileOcean
-	// TileMountain is bare rock on a summit (ADR 0009): drawn, not walkable.
+	// TileMountain is bare rock, in massifs around the summits (ADR 0011): drawn, not walkable.
 	TileMountain
-	// TileGlacier is ice at the inner ridge of the donut (ADR 0009): drawn, not walkable.
+	// TileGlacier is the ice of the ring at the inner ridge of the donut (ADR 0011): drawn, not walkable.
 	TileGlacier
 )
 
@@ -54,6 +57,11 @@ func (k TileKind) Known() bool {
 // Walkable: one may walk on this ground, when nothing stands on it.
 func (k TileKind) Walkable() bool {
 	return k == TileGrass || k == TileBridge
+}
+
+// RisesAboveGround: this ground may stand higher than MaxGroundHeight (ADR 0011).
+func (k TileKind) RisesAboveGround() bool {
+	return k == TileMountain || k == TileGlacier
 }
 
 // String is the kind's name, as players are sent it.

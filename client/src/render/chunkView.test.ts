@@ -42,6 +42,7 @@ describe('layoutChunk', () => {
       edges: [],
       rims: [],
       rimCorners: [],
+      block: null,
     });
   });
 
@@ -162,13 +163,14 @@ describe('hole rims', () => {
 describe('chunksToDraw', () => {
   const grid: Grid = { width: 160, height: 160, wraps: true };
 
-  it('draws the chunks that came, then again the shown ones beside them, each once', () => {
-    const shown = new Set(['1,1', '3,3']);
+  it('draws the chunks that came, then again the shown ones around them, diagonals included, each once (ADR 0011)', () => {
+    const shown = new Set(['1,1', '3,3', '3,0', '4,4']);
     const isShown = (key: { cx: number; cy: number }) => shown.has(`${key.cx},${key.cy}`);
     expect(chunksToDraw([{ cx: 2, cy: 1 }, { cx: 1, cy: 2 }], grid, isShown)).toEqual([
       { cx: 2, cy: 1 },
       { cx: 1, cy: 2 },
       { cx: 1, cy: 1 },
+      { cx: 3, cy: 0 },
     ]);
   });
 
@@ -252,5 +254,58 @@ describe('mountains and glaciers', () => {
     expect(faceMaterial('glacier')).toBe('ice');
     expect(faceMaterial('bridge')).toBe('wood');
     expect(faceMaterial('grass')).toBe('earth');
+  });
+});
+
+// ADR 0011 test 10
+describe('mountain and glacier blocks', () => {
+  /** The block of a cell at (5, 5), with its neighbors given by their offset from it: "dcol,drow". */
+  const blockAt = (kind: GroundKind, height: number, around: Record<string, { kind?: GroundKind; height?: number }>, outside = flatAround) => {
+    const cells: Record<string, { kind?: GroundKind; height?: number }> = { '5,5': { kind, height } };
+    for (const [offset, cell] of Object.entries(around)) {
+      const [dc, dr] = offset.split(',').map(Number) as [number, number];
+      cells[`${5 + dc},${5 + dr}`] = cell;
+    }
+    return tileAt(chunkOf(cells), 5, 5, outside)?.block;
+  };
+  const rock = (height: number) => ({ kind: 'mountain' as const, height });
+
+  it('rise each back and side corner to the highest cell of their kind touching it behind or beside', () => {
+    expect(blockAt('mountain', 1, { '-1,-1': rock(3) })?.shape, 'straight above on screen: the back corner').toEqual({ n: 2, w: 0, e: 0, peak: false });
+    expect(blockAt('mountain', 1, { '-1,0': rock(2) })?.shape, 'the column before: its 2 corners').toEqual({ n: 1, w: 1, e: 0, peak: false });
+    expect(blockAt('mountain', 1, { '0,-1': rock(2) })?.shape, 'the row before: its 2 corners').toEqual({ n: 1, w: 0, e: 1, peak: false });
+    expect(blockAt('mountain', 1, { '-1,1': rock(3) })?.shape, 'beside on the left: the left corner').toEqual({ n: 0, w: 2, e: 0, peak: false });
+    expect(blockAt('mountain', 1, { '-1,-1': rock(2), '-1,0': rock(4) })?.shape, 'the highest of them').toEqual({ n: 3, w: 3, e: 0, peak: false });
+  });
+
+  it('rise nothing toward another kind, a lower cell, a cell in front or a cell not held', () => {
+    const flat = { n: 0, w: 0, e: 0 };
+    expect(blockAt('mountain', 1, { '-1,-1': { kind: 'glacier', height: 3 } })?.shape).toMatchObject(flat);
+    expect(blockAt('mountain', 3, { '-1,-1': rock(1), '1,1': rock(5) })?.shape, 'lower behind, higher in front').toEqual({ ...flat, peak: false });
+    expect(blockAt('mountain', 1, {}, notHeld)?.shape).toMatchObject(flat);
+  });
+
+  it('a mountain with no higher mountain around is a peak; a glacier never is', () => {
+    expect(blockAt('mountain', 3, { '1,0': rock(2), '0,1': rock(3) })?.shape.peak).toBe(true);
+    expect(blockAt('glacier', 3, {})?.shape.peak).toBe(false);
+  });
+
+  it('glaciers rise toward the glaciers behind them the same way', () => {
+    expect(blockAt('glacier', 1, { '-1,0': { kind: 'glacier', height: 2 } })?.shape).toEqual({ n: 1, w: 1, e: 0, peak: false });
+  });
+
+  it('are outlined toward another kind, and toward a lower cell of their kind behind them only', () => {
+    expect(blockAt('mountain', 3, { '-1,0': rock(2), '1,0': rock(2), '0,-1': rock(3), '0,1': rock(3) })?.outline).toEqual(['nw']);
+    expect(blockAt('mountain', 3, { '-1,0': rock(3), '1,0': rock(3), '0,1': rock(3) })?.outline, 'grass behind').toEqual(['ne']);
+  });
+
+  it('a mountain at +6 has an icy top, at +5 not', () => {
+    expect(blockAt('mountain', 6, {})?.iced).toBe(true);
+    expect(blockAt('mountain', 5, {})?.iced).toBe(false);
+    expect(blockAt('glacier', 6, {})?.iced).toBe(false);
+  });
+
+  it('other kinds have none', () => {
+    expect(tileAt(chunkOf(), 5, 5)?.block).toBeNull();
   });
 });

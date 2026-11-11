@@ -61,6 +61,8 @@ export function createDefaultConfig(): GameConfig {
         cancel: [{ button: 'right', gesture: 'click' }],
         // by its printed letter, M on any layout (ADR 0005)
         openMap: [{ char: 'm' }, { char: 'M' }],
+        // opens the chatbox (ADR 0010); once it has focus, keys type and don't reach the game
+        chat: [{ code: 'Enter' }, { code: 'NumpadEnter' }],
       },
       map: {
         close: [{ char: 'm' }, { char: 'M' }, { code: 'Escape' }],

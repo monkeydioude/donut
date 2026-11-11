@@ -173,10 +173,10 @@ func (l *land) settleBanks() {
 	l.measureToWater()
 	lowest, highest := make([]int8, len(l.ground)), make([]int8, len(l.ground))
 	for i := range lowest {
-		lowest[i], highest[i] = MinHeight, MaxHeight
+		lowest[i], highest[i] = MinHeight, MaxGroundHeight
 	}
 	steps := make([]int8, len(l.ground))
-	for level := int8(MinHeight); level <= MaxHeight; level++ {
+	for level := int8(MinHeight); level <= MaxGroundHeight; level++ {
 		l.measureStepsTo(func(i int) bool { return isWater(l.ground[i]) && l.height[i] == level }, bankReach, steps)
 		for i, k := range steps {
 			if k > 0 {

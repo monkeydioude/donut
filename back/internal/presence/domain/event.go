@@ -61,6 +61,18 @@ type Stopped struct {
 	Cell core.Cell
 }
 
+// Teleported answers a teleport (ADR 0010): you stand on Cell now, walkable or not.
+type Teleported struct {
+	Cell     core.Cell
+	Walkable bool
+}
+
+// Refused answers a request that wasn't done (ADR 0010): which one, and why, in words for the player.
+type Refused struct {
+	Request string
+	Reason  string
+}
+
 func (Welcome) event()        {}
 func (Joined) event()         {}
 func (Moved) event()          {}
@@ -68,5 +80,7 @@ func (Left) event()           {}
 func (Planned) event()        {}
 func (Walking) event()        {}
 func (Stopped) event()        {}
+func (Teleported) event()     {}
+func (Refused) event()        {}
 func (ChunkShown) event()     {}
 func (ChunkForgotten) event() {}

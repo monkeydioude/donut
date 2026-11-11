@@ -21,7 +21,7 @@ export type ActionBindings<A extends string> = Readonly<Record<A, readonly Bindi
 
 /** The game's states, each with the actions its controls trigger (ADR 0004, ADR 0005). */
 export interface ControlStates {
-  worldmap: 'toggleLock' | 'center' | 'zoomIn' | 'zoomOut' | 'pan' | 'cancel' | 'openMap';
+  worldmap: 'toggleLock' | 'center' | 'zoomIn' | 'zoomOut' | 'pan' | 'cancel' | 'openMap' | 'chat';
   map: 'close';
 }
 

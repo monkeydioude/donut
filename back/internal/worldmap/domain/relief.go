@@ -6,15 +6,15 @@ import (
 	core "donut/internal/core/domain"
 )
 
-// levels is how many heights a cell may have, from MinHeight to MaxHeight.
-const levels = MaxHeight - MinHeight + 1
+// levels is how many heights the walkable terrain may have, from MinHeight to MaxGroundHeight.
+const levels = MaxGroundHeight - MinHeight + 1
 
 // ReliefOptions shape the hills and valleys (ADR 0007). No wavelengths: flat ground.
 type ReliefOptions struct {
 	// Wavelengths are the noise's octaves, in cells, the first one the strongest, each next one half as strong.
 	// On a wrapping map, each should divide the map's sides, so the noise has no seam.
 	Wavelengths []int
-	// Shares are the share of cells at each level, from MinHeight to MaxHeight, before cliffs are smoothed.
+	// Shares are the share of cells at each level, from MinHeight to MaxGroundHeight, before cliffs are smoothed.
 	Shares [levels]float64
 }
 

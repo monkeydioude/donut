@@ -1,13 +1,15 @@
 import { Container, Sprite, type Texture } from 'pixi.js';
+import { FLAT_BLOCK, type BlockShape } from '../art/block';
 import type { FaceMaterial, FaceSide } from '../art/cliff';
 import { CORNER_STEPS, CORNERS, EDGE_STEPS, EDGES, type Corner, type Edge } from '../art/edges';
+import { patternPlace } from '../art/facets';
 import { WATER_FRAMES } from '../art/water';
 import { pickForCell } from '../core/rng';
 import { silent, type Log } from '../debug/log';
 import { groundCenterAt, type Heights } from '../iso/heights';
 import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { localIndex, terrainAt, type CellTerrain, type Chunk, type HeldChunksRef } from '../map/chunks';
-import { CHUNK_SIZE, chunkId, chunkOrigin, chunksBeside, nearestCopy, normalize, type ChunkKey, type Grid } from '../map/grid';
+import { CHUNK_SIZE, chunkId, chunkOrigin, chunksAround, nearestCopy, normalize, type ChunkKey, type Grid } from '../map/grid';
 import { MIN_HEIGHT, type BakedGroundKind } from '../map/worldMap';
 import { placeOnCell } from './mapView';
 import type { FrameTicker } from './playersView';
@@ -33,7 +35,19 @@ export interface PlacedTile {
   rims: Edge[];
   /** The corners toward a lower diagonal neighbor, counted the same: the rim there joins its neighbors' rims. */
   rimCorners: Corner[];
+  /** A mountain's or a glacier's block; null for the other kinds. */
+  block: PlacedBlock | null;
 }
+
+/** A mountain's or a glacier's block (ADR 0011): its shape, the edges its top is outlined on, and an icy top. */
+export interface PlacedBlock {
+  shape: BlockShape;
+  outline: Edge[];
+  iced: boolean;
+}
+
+/** A mountain's top is drawn in ice from this height up (ADR 0011). */
+export const ICED_FROM = 6;
 
 /** A water cell of a chunk: drawn under the ground, with foam on its edges toward cells that aren't water. */
 export interface PlacedWater {
@@ -118,7 +132,11 @@ export function layoutChunk(chunk: Chunk, heights: Heights, around: TerrainAroun
     const at = groundCenterAt(heights, local, height);
     const edges = edgesToward(cell, kind, terrain);
     if (kind === 'water') water.push({ cell, local: at, foam: edges });
-    else tiles.push({ kind, cell, local: at, depth: heights.projection.depth(local), faces: facesOf(cell, height, terrain), edges, ...rimsOf(cell, height, terrain) });
+    else {
+      const faces = facesOf(cell, height, terrain);
+      const block = blockOf(cell, kind, height, terrain);
+      tiles.push({ kind, cell, local: at, depth: heights.projection.depth(local), faces, edges, ...rimsOf(cell, height, terrain), block });
+    }
   });
   return { tiles: tiles.sort((a, b) => a.depth - b.depth), water };
 }
@@ -133,8 +151,56 @@ function terrainInChunk(chunk: Chunk, cell: TilePoint): CellTerrain | null {
 }
 
 function neighbor(cell: TilePoint, edge: Edge): TilePoint {
-  const step = EDGE_STEPS[edge];
+  return stepFrom(cell, EDGE_STEPS[edge]);
+}
+
+function stepFrom(cell: TilePoint, step: TilePoint): TilePoint {
   return { col: cell.col + step.col, row: cell.row + step.row };
+}
+
+/** A block's corners that may rise, each with the neighbors that touch it behind or beside the cell. */
+const RISING_CORNERS: readonly { corner: 'n' | 'w' | 'e'; touching: readonly TilePoint[] }[] = [
+  { corner: 'n', touching: [CORNER_STEPS.n, EDGE_STEPS.nw, EDGE_STEPS.ne] },
+  { corner: 'w', touching: [EDGE_STEPS.nw, CORNER_STEPS.w] },
+  { corner: 'e', touching: [EDGE_STEPS.ne, CORNER_STEPS.e] },
+];
+const ALL_AROUND: readonly TilePoint[] = [...Object.values(EDGE_STEPS), ...Object.values(CORNER_STEPS)];
+
+/** A mountain's or glacier's block: its shape, its outline and its icy top. Null for the other kinds. */
+function blockOf(cell: TilePoint, kind: BakedGroundKind, height: number, terrain: TerrainAround): PlacedBlock | null {
+  if (kind !== 'mountain' && kind !== 'glacier') return null;
+  return { shape: shapeOf(cell, kind, height, terrain), outline: outlineOf(cell, kind, height, terrain), iced: kind === 'mountain' && height >= ICED_FROM };
+}
+
+/**
+ * The shape of a mountain or glacier cell (ADR 0011): each of its back and side corners rises to the highest cell of
+ * its kind touching it behind or beside, so the top leans up to it. A mountain with no higher mountain around is a
+ * peak. A cell not held, or of another kind, raises nothing.
+ */
+export function shapeOf(cell: TilePoint, kind: BakedGroundKind, height: number, terrain: TerrainAround): BlockShape {
+  const levelsUp = (step: TilePoint) => {
+    const other = terrain(stepFrom(cell, step));
+    return other?.kind === kind ? Math.max(0, other.height - height) : 0;
+  };
+  const rise = (touching: readonly TilePoint[]) => Math.max(0, ...touching.map(levelsUp));
+  const [n = 0, w = 0, e = 0] = RISING_CORNERS.map(({ touching }) => rise(touching));
+  return { n, w, e, peak: kind === 'mountain' && rise(ALL_AROUND) === 0 };
+}
+
+/** A block's back edges: behind them, a lower cell of its kind shows as a step down. In front, its wall joins them. */
+const BACK_EDGES: readonly Edge[] = ['nw', 'ne'];
+
+/**
+ * The edges a block's top is outlined on: toward a cell of another kind, or a lower one of its kind behind it. A lower
+ * cell of its kind in front leans up to this one, which joins them. A cell not held gets none: it's drawn again when
+ * that cell comes.
+ */
+function outlineOf(cell: TilePoint, kind: BakedGroundKind, top: number, terrain: TerrainAround): Edge[] {
+  return EDGES.filter((edge) => {
+    const other = terrain(neighbor(cell, edge));
+    if (other === null) return false;
+    return other.kind !== kind || (BACK_EDGES.includes(edge) && other.height < top);
+  });
 }
 
 /** The edges toward a cell known to be of another kind. A neighbor not held counts as the same kind. */
@@ -164,8 +230,8 @@ export function faceLevels(height: number, toward: CellTerrain | null): number {
 }
 
 /**
- * The chunks to draw on a frame: the ones that came in, then the shown ones beside them, each once, in that order.
- * A chunk's faces and edges depend on the chunks beside it.
+ * The chunks to draw on a frame: the ones that came in, then the shown ones around them, each once, in that order.
+ * A chunk's faces, edges and walls depend on the chunks around it, diagonals included (ADR 0011).
  */
 export function chunksToDraw(arrived: readonly ChunkKey[], grid: Grid, isShown: (key: ChunkKey) => boolean): ChunkKey[] {
   const ids = new Set<string>();
@@ -176,7 +242,7 @@ export function chunksToDraw(arrived: readonly ChunkKey[], grid: Grid, isShown: 
     keys.push(key);
   };
   arrived.forEach(add);
-  for (const key of arrived) chunksBeside(grid, key).filter(isShown).forEach(add);
+  for (const key of arrived) chunksAround(grid, key).filter(isShown).forEach(add);
   return keys;
 }
 
@@ -356,9 +422,9 @@ function topOf(tile: PlacedTile, graphics: WorldGraphics): SpriteGraphic {
     case 'ocean':
       return graphics.terrain.ocean(tile.edges);
     case 'mountain':
-      return graphics.terrain.mountain(tile.edges);
+      return graphics.terrain.mountain({ place: patternPlace(tile.cell), outline: tile.block?.outline ?? [], shape: tile.block?.shape ?? FLAT_BLOCK, iced: tile.block?.iced ?? false });
     case 'glacier':
-      return graphics.terrain.glacier(tile.edges);
+      return graphics.terrain.glacier({ place: patternPlace(tile.cell), edges: tile.block?.outline ?? [], shape: tile.block?.shape ?? FLAT_BLOCK });
   }
 }
 

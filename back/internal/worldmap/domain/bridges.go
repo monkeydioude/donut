@@ -44,7 +44,7 @@ func (l *land) buildBridge(st station, maxSpan int) bool {
 	}
 	center := st.cells[len(st.cells)/2]
 	deckLevel := int(l.height[center]) + 1
-	if !isWater(l.ground[center]) || deckLevel > MaxHeight {
+	if !isWater(l.ground[center]) || deckLevel > MaxGroundHeight {
 		return false
 	}
 	deck := []int{center}

@@ -63,3 +63,11 @@ export function mapScale(map: Size, room: Size): number {
   const fits = (scale: number) => map.width * scale <= room.width && map.height * scale <= room.height;
   return MAP_SCALES.find(fits) ?? SMALLEST_SCALE;
 }
+
+/** The cell under a point of the map's rectangle, at the map's scale: the inverse of `rectangleMark`; null off it. */
+export function mapCellAt(point: ScreenPoint, scale: number, map: Size): TilePoint | null {
+  const col = Math.floor(point.x / scale);
+  const row = Math.floor(point.y / scale);
+  const inside = col >= 0 && row >= 0 && col < map.width && row < map.height;
+  return inside ? { col, row } : null;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeServerMessage, encodePlan, encodeWalk, socketUrl } from './protocol';
+import { decodeServerMessage, encodePlan, encodeTeleport, encodeWalk, socketUrl } from './protocol';
 
 const ann = { id: 'a', name: 'Ann', robot: 'dome-head', col: 1, row: 2 };
 
@@ -88,6 +88,15 @@ describe('chunk messages', () => {
     expect(message.chunk.height.slice(0, 7)).toEqual([-3, -2, -1, 0, 1, 2, 3]);
   });
 
+  // ADR 0011 test 8
+  it('decode a chunk with a mountain at 6', () => {
+    const chunk = serverChunk();
+    (chunk.height as number[])[0] = 6;
+    const message = decodeServerMessage(JSON.stringify(chunk));
+    if (message?.type !== 'chunk') throw new Error('not a chunk');
+    expect(message.chunk.height[0]).toBe(6);
+  });
+
   it('decode a forget', () => {
     expect(decodeServerMessage('{"type": "forget", "cx": 2, "cy": 1}')).toEqual({ type: 'forget', cx: 2, cy: 1 });
   });
@@ -99,7 +108,7 @@ describe('chunk messages', () => {
     'an unknown kind': (c) => (c.kinds = ['grass', 'lava']),
     'no kinds': (c) => (c.kinds = []),
     'a region over 255': (c) => ((c.region as number[])[0] = 256),
-    'a height of 4 (ADR 0007)': (c) => ((c.height as number[])[0] = 4),
+    'a height of 7 (ADR 0011)': (c) => ((c.height as number[])[0] = 7),
     'a height of -4 (ADR 0007)': (c) => ((c.height as number[])[0] = -4),
     'an object outside its chunk': (c) => (c.objects = [{ id: 'r1', kind: 'rock', col: 96, row: 40 }]),
     'an object of an unknown kind': (c) => (c.objects = [{ id: 't1', kind: 'tree', col: 70, row: 40 }]),
@@ -159,5 +168,29 @@ describe('socketUrl', () => {
       'ws://localhost:5180/api/maps/meadow/ws?player=a-b&name=Guest+12%26&robot=dome-head',
     );
     expect(socketUrl({ protocol: 'https:', host: 'donut.example' }, 'meadow', guest)).toMatch(/^wss:\/\/donut\.example\//);
+  });
+});
+
+// ADR 0010 test 11
+describe('teleport messages', () => {
+  it('encode a teleport to a map and a cell', () => {
+    expect(JSON.parse(encodeTeleport('world', { col: 1023, row: 511 }))).toEqual({ type: 'teleport', map: 'world', col: 1023, row: 511 });
+  });
+
+  it('decode teleported and refused', () => {
+    expect(decodeServerMessage('{"type": "teleported", "col": 1023, "row": 511, "walkable": false}')).toEqual({ type: 'teleported', col: 1023, row: 511, walkable: false });
+    expect(decodeServerMessage('{"type": "refused", "request": "teleport", "reason": "unknown map: mars"}')).toEqual({ type: 'refused', request: 'teleport', reason: 'unknown map: mars' });
+  });
+
+  it('give nothing for a missing or fractional cell, a missing walkable, or a reason that is not text', () => {
+    for (const text of [
+      '{"type": "teleported", "col": 1023, "walkable": true}',
+      '{"type": "teleported", "col": 1.5, "row": 511, "walkable": true}',
+      '{"type": "teleported", "col": 1023, "row": 511}',
+      '{"type": "refused", "request": "teleport", "reason": 5}',
+      '{"type": "refused", "reason": "x"}',
+    ]) {
+      expect(decodeServerMessage(text), text).toBeNull();
+    }
   });
 });

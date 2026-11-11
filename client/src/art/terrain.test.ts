@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { BRIDGE_COLORS, paintBridge, RAIL_PX } from './bridge';
 import { FACE_COLORS, paintFace, paintRim } from './cliff';
 import { depthFromEdge, edgesKey } from './edges';
-import { GLACIER_COLORS, iceHeadroom, paintGlacier } from './glacier';
+import { FLAT_BLOCK, blockFrame, type BlockShape } from './block';
+import { GLACIER_COLORS, paintGlacier } from './glacier';
 import { HOLE_COLORS, paintHole } from './hole';
-import { MOUNTAIN_COLORS, paintMountain, peakHeadroom } from './mountain';
+import { MOUNTAIN_COLORS, paintMountain, type MountainLook } from './mountain';
 import { OCEAN_COLORS, paintOcean } from './ocean';
 import { readPixel, type PixelBuffer } from './pixelBuffer';
 import { isOnGround, type TileFrame } from './tileFrame';
@@ -152,61 +153,68 @@ describe('paintOcean', () => {
   });
 });
 
-// ADR 0009 test 14
+// ADR 0011 test 12
 describe('paintMountain', () => {
-  const mountainFrame: TileFrame = { ...frame, headroom: peakHeadroom(32) };
-  const center = { x: 16, y: mountainFrame.headroom + 8 };
+  const look = (more: Partial<MountainLook> = {}): MountainLook => ({ place: { col: 0, row: 0 }, outline: [], shape: FLAT_BLOCK, iced: false, ...more });
+  const paint = (l: MountainLook) => paintMountain(blockFrame(32, 16, l.shape, 8), l, 8);
+  const rock = new Set<number>([...MOUNTAIN_COLORS.top, MOUNTAIN_COLORS.crack, MOUNTAIN_COLORS.outline]);
+  const stone = new Set<number>([...MOUNTAIN_COLORS.side.left, ...MOUNTAIN_COLORS.side.right, MOUNTAIN_COLORS.crack]);
 
-  it('is a stone top with cracks, and a peak rising into the headroom: lit left, dark right, snow on top', () => {
-    const lone = paintMountain(mountainFrame, []);
-    expect(colorsOf(lone)).toEqual(new Set([MOUNTAIN_COLORS.top, MOUNTAIN_COLORS.crack, MOUNTAIN_COLORS.peakLit, MOUNTAIN_COLORS.peakDark, MOUNTAIN_COLORS.snow]));
-    expect(readPixel(lone, 15, 0).rgb, 'the apex').toBe(MOUNTAIN_COLORS.snow);
-    expect(readPixel(lone, 13, center.y - 2).rgb, 'left of the middle').toBe(MOUNTAIN_COLORS.peakLit);
-    expect(readPixel(lone, 18, center.y - 2).rgb, 'right of the middle').toBe(MOUNTAIN_COLORS.peakDark);
-    expect(readPixel(lone, 2, center.y).alpha, 'the ground shows beside the peak').toBeGreaterThan(0);
-    expect(readPixel(lone, 2, 1).alpha, 'nothing beside the peak above the ground').toBe(0);
+  it('is rock on the ground diamond only, without a peak: nothing rises above its top', () => {
+    const flat = paint(look());
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) expect(readPixel(flat, x, y).alpha > 0, `${x},${y}`).toBe(isOnGround(frame, x, y));
+    for (const color of colorsOf(flat)) expect(rock.has(color), color.toString(16)).toBe(true);
+  });
+
+  it('a peak rises to a point over its middle, lit on its left', () => {
+    const shape: BlockShape = { ...FLAT_BLOCK, peak: true };
+    const peak = paint(look({ shape }));
+    const groundCenterY = blockFrame(32, 16, shape, 8).headroom + 8;
+    expect(groundCenterY - 12, 'its point is 12 px over its middle, at the top of the frame').toBe(0);
+    expect(readPixel(peak, 15, 0).alpha + readPixel(peak, 16, 0).alpha, 'the point, in the middle').toBeGreaterThan(0);
+    expect(readPixel(peak, 4, 0).alpha, 'nothing beside it up there').toBe(0);
+    const brightness = (rgb: number) => ((rgb >> 16) & 0xff) + ((rgb >> 8) & 0xff) + (rgb & 0xff);
+    expect(brightness(readPixel(peak, 10, groundCenterY + 2).rgb), 'left of the middle is lighter').toBeGreaterThan(brightness(readPixel(peak, 21, groundCenterY + 2).rgb));
   });
 
   it('has an outline on the edges given only', () => {
-    const outlined = paintMountain(mountainFrame, ['se']);
-    expect(readPixel(outlined, 30, center.y).rgb, 'on the se edge').toBe(MOUNTAIN_COLORS.outline);
-    expect(readPixel(outlined, 1, center.y).rgb, 'the sw edge has none').not.toBe(MOUNTAIN_COLORS.outline);
-    expect(colorsOf(paintMountain(mountainFrame, [])).has(MOUNTAIN_COLORS.outline)).toBe(false);
+    expect(readPixel(paint(look({ outline: ['se'] })), 30, 8).rgb, 'on the se edge').toBe(MOUNTAIN_COLORS.outline);
+    expect(colorsOf(paint(look())).has(MOUNTAIN_COLORS.outline), 'none given').toBe(false);
   });
 
-  it('is the same every time', () => {
-    expect(paintMountain(mountainFrame, ['nw']).data.join()).toBe(paintMountain(mountainFrame, ['nw']).data.join());
+  it('an icy top is in the ice colors, its sides in stone', () => {
+    const shape: BlockShape = { ...FLAT_BLOCK, w: 2 };
+    const iced = paint(look({ shape, iced: true }));
+    const ice = new Set<number>([...GLACIER_COLORS.top, GLACIER_COLORS.crack, GLACIER_COLORS.gloss, GLACIER_COLORS.edge]);
+    const colors = colorsOf(iced);
+    expect([...colors].some((c) => ice.has(c)), 'an icy top').toBe(true);
+    expect([...colors].some((c) => stone.has(c)), 'stone sides').toBe(true);
+    for (const color of colors) expect(ice.has(color) || stone.has(color), color.toString(16)).toBe(true);
+  });
+
+  it('is the same for the same place in the pattern, 8 cells apart', () => {
+    expect(paint(look({ place: { col: 3, row: 5 } })).data.join()).toBe(paint(look({ place: { col: 3, row: 5 } })).data.join());
   });
 });
 
-// ADR 0009 test 15
+// ADR 0011 test 12
 describe('paintGlacier', () => {
-  const rise = iceHeadroom(32);
-  const glacierFrame: TileFrame = { ...frame, headroom: rise };
-  const groundCenterY = rise + 8;
+  const paint = (edges: readonly ('ne' | 'nw' | 'se' | 'sw')[], shape: BlockShape = FLAT_BLOCK) =>
+    paintGlacier(blockFrame(32, 16, shape, 8), { place: { col: 0, row: 0 }, edges, shape }, 8);
 
-  it('raises the top into the headroom, with the sides under its front edges', () => {
-    const lone = paintGlacier(glacierFrame, []);
-    expect(colorsOf(lone)).toEqual(new Set([GLACIER_COLORS.top, GLACIER_COLORS.crack, GLACIER_COLORS.sideLit, GLACIER_COLORS.sideDark]));
-    expect(readPixel(lone, 16, 0).rgb, "the top's back corner, in the headroom").toBe(GLACIER_COLORS.top);
-    expect(readPixel(lone, 15, glacierFrame.headroom + 15).rgb, 'the sw side').toBe(GLACIER_COLORS.sideLit);
-    expect(readPixel(lone, 16, glacierFrame.headroom + 15).rgb, 'the se side').toBe(GLACIER_COLORS.sideDark);
+  it('is ice on the ground diamond only when flat: no raised slab', () => {
+    const flat = paint(['ne', 'nw', 'se', 'sw']);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) expect(readPixel(flat, x, y).alpha > 0, `${x},${y}`).toBe(isOnGround(frame, x, y));
   });
 
-  it('draws on the ground diamond and the raised one only', () => {
-    const lone = paintGlacier(glacierFrame, ['ne', 'nw', 'se', 'sw']);
-    for (let y = 0; y < lone.height; y++) {
-      for (let x = 0; x < lone.width; x++) {
-        const drawn = isOnGround(glacierFrame, x, y) || isOnGround(glacierFrame, x, y + rise);
-        expect(readPixel(lone, x, y).alpha > 0, `pixel ${x}, ${y}`).toBe(drawn);
-      }
-    }
+  it('has its bright line on the edges given only', () => {
+    expect(readPixel(paint(['se']), 30, 8).rgb, 'on the se edge').toBe(GLACIER_COLORS.edge);
+    expect(colorsOf(paint([])).has(GLACIER_COLORS.edge), 'none given').toBe(false);
   });
 
-  it('has a white rim on the edges given only, on the raised top', () => {
-    const rimmed = paintGlacier(glacierFrame, ['se']);
-    expect(readPixel(rimmed, 30, groundCenterY - rise).rgb, 'on the raised se edge').toBe(GLACIER_COLORS.rim);
-    expect(readPixel(rimmed, 1, groundCenterY - rise).rgb, 'the sw edge has none').not.toBe(GLACIER_COLORS.rim);
-    expect(colorsOf(paintGlacier(glacierFrame, [])).has(GLACIER_COLORS.rim)).toBe(false);
+  it('leaning up, its sides are the ice faces, streaked', () => {
+    const colors = colorsOf(paint([], { ...FLAT_BLOCK, w: 2 }));
+    expect(colors.has(FACE_COLORS.ice.left.face)).toBe(true);
+    expect(colors.has(0x8ad0ea), 'a lighter streak').toBe(true);
   });
 });

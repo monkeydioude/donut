@@ -105,7 +105,7 @@ func writeRoomError(w http.ResponseWriter, r *http.Request, log *slog.Logger, er
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
-// readRequests passes every plan and walk the client sends to the room, until the connection ends,
+// readRequests passes every plan, walk and teleport the client sends to the room, until the connection ends,
 // and gives why it ended. Other messages are ignored.
 func readRequests(ctx context.Context, conn *websocket.Conn, room *app.Room, id string, c app.Client, log *slog.Logger) error {
 	for {
@@ -115,7 +115,7 @@ func readRequests(ctx context.Context, conn *websocket.Conn, room *app.Room, id 
 		}
 		req, ok := decodeRequest(data)
 		if !ok {
-			log.DebugContext(ctx, "ws message ignored: not a plan or walk", "bytes", len(data), "message", string(data[:min(len(data), loggedBytes)]))
+			log.DebugContext(ctx, "ws message ignored: not a plan, walk or teleport", "bytes", len(data), "message", string(data[:min(len(data), loggedBytes)]))
 			continue
 		}
 		log.DebugContext(ctx, "ws receive", "request", req.kind, "to", req.to, "bytes", len(data))
@@ -124,6 +124,8 @@ func readRequests(ctx context.Context, conn *websocket.Conn, room *app.Room, id 
 			room.Plan(id, c, req.to)
 		case "walk":
 			room.Walk(id, c, req.to)
+		case "teleport":
+			room.Teleport(id, c, req.toMap, req.to)
 		}
 	}
 }

@@ -1,11 +1,13 @@
 import { silent, type Log } from '../debug/log';
-import { decodeServerMessage, encodePlan, encodeWalk, type Cell, type ServerMessage } from './protocol';
+import { decodeServerMessage, encodePlan, encodeTeleport, encodeWalk, type Cell, type ServerMessage } from './protocol';
 
 export interface GameSocket {
   /** Asks the path from your player to a cell: the answer comes as a `planned` message. */
   plan(to: Cell): void;
   /** Asks the server to walk your player to a cell: it answers `walking`, then each step comes as `moved`. */
   walk(to: Cell): void;
+  /** Asks the server to put your player on a cell of a map: it answers `teleported` or `refused` (ADR 0010). */
+  teleport(map: string, to: Cell): void;
   close(): void;
 }
 
@@ -48,6 +50,7 @@ export function openGameSocket(url: string, handlers: GameSocketHandlers, log: L
   return {
     plan: (to) => send(encodePlan(to)),
     walk: (to) => send(encodeWalk(to)),
+    teleport: (map, to) => send(encodeTeleport(map, to)),
     close: () => {
       log('closing');
       socket.close();

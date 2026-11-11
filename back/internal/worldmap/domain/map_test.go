@@ -75,8 +75,12 @@ func TestValidate(t *testing.T) {
 		"an object on void":            func(m *domain.Map) { m.SetGround(cell(2, 2), domain.TileVoid); m.Objects = []domain.Object{rock(2, 2)} },
 		"an object on a missing chunk": func(m *domain.Map) { delete(m.Chunks, core.ChunkKey{CX: 1}); m.Objects = []domain.Object{rock(40, 2)} },
 		"two objects on one cell":      func(m *domain.Map) { m.Objects = []domain.Object{rock(2, 2), rock(2, 2)} },
-		"a height of 4":                func(m *domain.Map) { firstChunk(m).Height[5] = 4 },
+		"grass at 4 (ADR 0011)":        func(m *domain.Map) { firstChunk(m).Height[5] = 4 },
 		"a height of -4":               func(m *domain.Map) { firstChunk(m).Height[5] = -4 },
+		"a mountain at 7 (ADR 0011)": func(m *domain.Map) {
+			m.SetGround(cell(5, 0), domain.TileMountain)
+			m.SetHeight(cell(5, 0), 7)
+		},
 		"a rock on water": func(m *domain.Map) {
 			m.SetGround(cell(2, 2), domain.TileWater)
 			m.Objects = []domain.Object{rock(2, 2)}
@@ -123,8 +127,26 @@ func TestValidate(t *testing.T) {
 			m.SetGround(cell(i, 0), kind)
 		}
 		m.SetHeight(cell(0, 1), domain.MinHeight)
-		m.SetHeight(cell(1, 1), domain.MaxHeight)
+		m.SetHeight(cell(1, 1), domain.MaxGroundHeight)
 		assert.NoError(t, m.Validate())
+	})
+
+	// ADR 0011 test 1
+	t.Run("accepts mountains and glaciers from +4 to +6, and refuses any other kind above +3", func(t *testing.T) {
+		for _, kind := range []domain.TileKind{domain.TileMountain, domain.TileGlacier} {
+			for height := int8(4); height <= domain.MaxHeight; height++ {
+				m := valid()
+				m.SetGround(cell(5, 0), kind)
+				m.SetHeight(cell(5, 0), height)
+				assert.NoError(t, m.Validate(), "%v at %d", kind, height)
+			}
+		}
+		for _, kind := range []domain.TileKind{domain.TileGrass, domain.TileWater, domain.TileHole, domain.TileBridge, domain.TileOcean} {
+			m := valid()
+			m.SetGround(cell(5, 0), kind)
+			m.SetHeight(cell(5, 0), 4)
+			assert.ErrorContains(t, m.Validate(), "height 4 is only for mountains and glaciers", "%v at 4", kind)
+		}
 	})
 
 	t.Run("accepts a wrapping map of 160 x 160", func(t *testing.T) {

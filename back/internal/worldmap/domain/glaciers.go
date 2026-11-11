@@ -1,28 +1,25 @@
 package domain
 
 import (
-	"math"
-
 	core "donut/internal/core/domain"
 )
 
-// GlacierOptions are the ice blobs at the inner ridge of the donut (ADR 0009): the row that faces the hole, the
-// coldest. Zero PerChunk or HalfWidth: none.
+// GlacierOptions are the glacier ring at the inner ridge of the donut (ADR 0011): the rows that face the hole, the
+// coldest, all the way round. Zero Edge: none.
 type GlacierOptions struct {
-	// HalfWidth is how many rows the cold band spans on each side of the ridge.
-	HalfWidth int
-	// PerChunk is how many glaciers a chunk of the band gets, on average. They are densest on the ridge.
-	PerChunk float64
-	// Size is how many cells a glacier has.
-	Size Span
-	// Clearance is how far from the spawn a glacier stays, at least.
-	Clearance int
-	Spawn     core.Cell
+	// Core is how many rows on each side of the ridge are all glacier; Edge how far its ragged edge reaches.
+	Core, Edge int
+	// Pass is how many columns on each side of the spawn's column stay open, on the whole ring's height.
+	Pass  int
+	Spawn core.Cell
+	// RiseEvery is how many cells in from the ring's edge each level of ice takes.
+	RiseEvery int
 }
 
-// starterGlaciers: about 4 glaciers per chunk of the 160 rows around the ridge, 48 cells from the spawn at least.
+// starterGlaciers: the 40 rows on each side of the ridge, a ragged edge out to 64, a pass 96 columns wide at the
+// spawn, and a level of ice every 4 cells in.
 func starterGlaciers(spawn core.Cell) GlacierOptions {
-	return GlacierOptions{HalfWidth: 80, PerChunk: 4, Size: Span{Min: 6, Max: 24}, Clearance: 48, Spawn: spawn}
+	return GlacierOptions{Core: 40, Edge: 64, Pass: 48, Spawn: spawn, RiseEvery: 4}
 }
 
 // ridge is the row that faces the hole of the donut (ADR 0003).
@@ -30,31 +27,42 @@ func (l *land) ridge() int {
 	return l.grid.Height / 2
 }
 
-// freezeRidge grows glaciers on the grass of the cold band, each from a random column and a row drawn as the ridge
-// plus the difference of two draws: a triangle, densest on the ridge. A seed on the sea, water, a hole, a mountain
-// or ice is skipped, and a glacier that can't grow stays smaller: the count is a ceiling.
+// freezeRidge turns the ring into glacier, over land and sea: grass, water, the ocean and bridges freeze; holes stay,
+// as crevasses, and so do mountains, rock standing in the ice. Then the ice rises: each glacier cell's height is its
+// height before + 1 + ⌊(d − 1) / RiseEvery⌋, d its distance to the closest cell that isn't glacier, a hole or a
+// mountain, capped at MaxHeight.
 func (l *land) freezeRidge(o GlacierOptions, rng Rng) {
-	if o.PerChunk <= 0 || o.HalfWidth <= 0 {
+	if o.Edge <= 0 {
 		return
 	}
-	bandChunks := float64(l.grid.ChunkColumns()) * float64(2*o.HalfWidth) / float64(core.ChunkSize)
-	for range int(math.Round(o.PerChunk * bandChunks)) {
-		row := l.ridge() + int(math.Round((rng.Float64()-rng.Float64())*float64(o.HalfWidth)))
-		start, ok := l.index(core.Cell{Col: int(rng.Float64() * float64(l.grid.Width)), Row: row})
-		if !ok {
-			continue
-		}
-		for _, i := range l.growBlob(start, o.Size.pick(rng), func(i int) bool { return l.canFreeze(i, o) }, rng) {
+	ragged := fractalNoise(l.grid, edgeWavelengths, rng)
+	for i := range l.ground {
+		if l.inRing(i, o, ragged[i]) && canFreeze(l.ground[i]) {
 			l.ground[i] = TileGlacier
 		}
 	}
+	outside := func(i int) bool {
+		kind := l.ground[i]
+		return kind != TileGlacier && kind != TileHole && kind != TileMountain
+	}
+	l.raiseByDistance(TileGlacier, outside, func(steps int) int { return 1 + (steps-1)/o.RiseEvery })
 }
 
-// canFreeze: the cell is grass, within the band, and away from the spawn.
-func (l *land) canFreeze(i int, o GlacierOptions) bool {
+// inRing: the cell is within the core, or within the edge where the noise (−1 to 1) lets it, and out of the pass. A
+// cell r rows from the ridge, past the core, freezes when (r − Core) / (Edge − Core) < (noise + 1) / 2.
+func (l *land) inRing(i int, o GlacierOptions, noise float64) bool {
 	c := l.cellAt(i)
-	if !l.isGrass(i) || abs(c.Row-l.ridge()) > o.HalfWidth {
+	if axisDistance(float64(c.Col), float64(o.Spawn.Col), l.grid.Width, l.grid.Wraps) <= float64(o.Pass) {
 		return false
 	}
-	return distance(l.grid, pointOf(c), pointOf(o.Spawn)) >= float64(o.Clearance)
+	r := abs(c.Row - l.ridge())
+	if r <= o.Core {
+		return true
+	}
+	return r <= o.Edge && float64(r-o.Core)/float64(o.Edge-o.Core) < (noise+1)/2
+}
+
+// canFreeze: grass, water of any sort and bridges become glacier.
+func canFreeze(kind TileKind) bool {
+	return kind == TileGrass || isWater(kind) || kind == TileBridge
 }

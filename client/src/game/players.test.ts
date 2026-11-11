@@ -54,3 +54,12 @@ describe('applyMessage', () => {
     expect(applyMessage(emptyPlayers(), { type: 'stopped', col: 1, row: 1 })).toEqual(emptyPlayers());
   });
 });
+
+// ADR 0010 test 12
+describe('teleported', () => {
+  it('moves your player there, and a refusal changes nothing', () => {
+    const state = applyMessage(welcomed(), { type: 'teleported', col: 100, row: 100, walkable: true });
+    expect(ownPlayer(state)).toEqual({ ...ann, col: 100, row: 100 });
+    expect(applyMessage(state, { type: 'refused', request: 'teleport', reason: 'no' })).toBe(state);
+  });
+});

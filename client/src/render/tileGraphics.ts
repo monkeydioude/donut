@@ -1,7 +1,10 @@
 import { CanvasSource, Texture } from 'pixi.js';
 import type { Rng } from '../core/rng';
+import { shapeKey } from '../art/block';
 import type { FaceMaterial, FaceSide } from '../art/cliff';
 import { edgesKey, type Corner, type Edge } from '../art/edges';
+import type { GlacierLook } from '../art/glacier';
+import type { MountainLook } from '../art/mountain';
 import type { PixelBuffer } from '../art/pixelBuffer';
 import type { ArtSet, SpriteArt, TerrainArt } from '../art/tileArtSet';
 import { groundCenter, type TileFrame } from '../art/tileFrame';
@@ -21,8 +24,8 @@ export interface TerrainGraphics {
   hole(rim: readonly Edge[]): SpriteGraphic;
   ocean(foam: readonly Edge[]): SpriteGraphic;
   bridge(rails: readonly Edge[]): SpriteGraphic;
-  mountain(outline: readonly Edge[]): SpriteGraphic;
-  glacier(rim: readonly Edge[]): SpriteGraphic;
+  mountain(look: MountainLook): SpriteGraphic;
+  glacier(look: GlacierLook): SpriteGraphic;
 }
 
 /** Several variants of grass and of each object kind, so the world doesn't look repetitive; the terrain's pieces. */
@@ -55,7 +58,10 @@ export function createWorldGraphics(options: WorldGraphicsOptions): WorldGraphic
   };
 }
 
-/** Each terrain piece painted once for its key, then kept: there are a few dozen at most. */
+/**
+ * Each terrain piece painted once for its key, then kept. Mountains and glaciers have the most: one per place in their
+ * pattern, edges, shape and icy top (ADR 0011), the few a map's cells use.
+ */
 function terrainGraphics(art: TerrainArt, toTexture: TextureFactory): TerrainGraphics {
   const kept = new Map<string, SpriteGraphic>();
   const once = (key: string, frame: TileFrame, paint: () => PixelBuffer): SpriteGraphic => {
@@ -73,9 +79,14 @@ function terrainGraphics(art: TerrainArt, toTexture: TextureFactory): TerrainGra
     hole: (rim) => once(`hole ${edgesKey(rim)}`, art.tileFrame, () => art.hole(rim)),
     ocean: (foam) => once(`ocean ${edgesKey(foam)}`, art.tileFrame, () => art.ocean(foam)),
     bridge: (rails) => once(`bridge ${edgesKey(rails)}`, art.bridgeFrame, () => art.bridge(rails)),
-    mountain: (outline) => once(`mountain ${edgesKey(outline)}`, art.mountainFrame, () => art.mountain(outline)),
-    glacier: (rim) => once(`glacier ${edgesKey(rim)}`, art.glacierFrame, () => art.glacier(rim)),
+    mountain: (look) =>
+      once(`mountain ${placeKey(look.place)} ${edgesKey(look.outline)} ${shapeKey(look.shape)} ${look.iced ? 'iced' : 'rock'}`, art.blockFrame(look.shape), () => art.mountain(look)),
+    glacier: (look) => once(`glacier ${placeKey(look.place)} ${edgesKey(look.edges)} ${shapeKey(look.shape)}`, art.blockFrame(look.shape), () => art.glacier(look)),
   };
+}
+
+function placeKey(place: { col: number; row: number }): string {
+  return `${place.col},${place.row}`;
 }
 
 /** A one-off sprite (a border, a marker) from a buffer painted in a tile frame. */
