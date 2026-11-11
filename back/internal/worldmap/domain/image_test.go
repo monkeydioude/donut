@@ -150,6 +150,29 @@ func TestImageTerrain(t *testing.T) {
 
 	t.Run("it stays a paletted PNG, of at most 256 colors", func(t *testing.T) {
 		assert.LessOrEqual(t, len(img.Palette), 256)
-		assert.Len(t, img.Palette, 208)
+		assert.Len(t, img.Palette, 211, "ADR 0012: and gold for domes, floors and walls")
 	})
+}
+
+// ADR 0012 test 13
+func TestADomeIsGoldOnTheMapImage(t *testing.T) {
+	m := stripes(false)
+	m.Objects = []domain.Object{{Kind: domain.ObjectDome, Col: 4, Row: 6, LeadsTo: "city"}, {Kind: domain.ObjectRock, Col: 9, Row: 9}}
+
+	img := domain.Image(m)
+
+	for _, c := range []core.Cell{{Col: 4, Row: 6}, {Col: 5, Row: 6}, {Col: 4, Row: 7}, {Col: 5, Row: 7}} {
+		assert.Equal(t, domain.DomeGold, at(img, c.Col, c.Row), "%v is under the dome", c)
+	}
+	assert.Equal(t, domain.RockGray, at(img, 9, 9), "a rock stays gray")
+	assert.NotEqual(t, domain.DomeGold, at(img, 6, 6), "beside the dome")
+}
+
+// ADR 0012 test 13: a city's floor and wall have their colors, and the void past its wall is transparent
+func TestACityOnTheMapImage(t *testing.T) {
+	img := domain.Image(domain.GenerateCity(domain.Doma1()))
+
+	assert.Equal(t, domain.FloorPaving, at(img, 5, 16), "floor")
+	assert.Equal(t, domain.WallMetal, at(img, 15, 1), "wall")
+	assert.Equal(t, uint8(0), img.ColorIndexAt(0, 0), "void in the corner")
 }

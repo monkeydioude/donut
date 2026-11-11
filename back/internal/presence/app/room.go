@@ -23,7 +23,8 @@ type Client interface {
 	Close()
 }
 
-// World is the room's map: where players may stand, how they get somewhere, and what they are sent of each chunk.
+// World is the room's map: where players may stand, how they get somewhere, what they are sent of each chunk, and
+// its doors (ADR 0012). It never changes once the room opened, so it may be read without the room's lock.
 type World interface {
 	Grid() core.Grid
 	IsWalkable(core.Cell) bool
@@ -32,13 +33,33 @@ type World interface {
 	Path(from, to core.Cell) []core.Cell
 	// Chunk is what players are sent of a chunk. False for a chunk outside the map.
 	Chunk(core.ChunkKey) (*core.ChunkContents, bool)
+	// Info is what a player is told of the map on arriving.
+	Info() core.MapInfo
+	// DomeAt is the dome covering a cell, and DomeLeadingTo the dome leading to a map; false when there's none.
+	DomeAt(core.Cell) (core.Dome, bool)
+	DomeLeadingTo(slug string) (core.Dome, bool)
+	// Edge is a city's edge: its walkable cells touching its wall. Empty on a map without walls.
+	Edge() []core.Cell
+	// IsOutside: in a city, a click on this cell means leaving. Never on a wrapping map.
+	IsOutside(core.Cell) bool
+}
+
+// Traveler is a player going from one room to another (ADR 0012): who, on which connection, where to, and whether
+// they asked a teleport, which they are told once there.
+type Traveler struct {
+	Player   domain.Player
+	Client   Client
+	To       domain.Destination
+	Teleport bool
+	// From is the map they left, for the logs.
+	From string
 }
 
 // Room is the players on one map. The server walks their paths, a step at a time, and tells each player what happens
 // on the chunks they hold (ADR 0003). It is safe for concurrent use.
 type Room struct {
 	mu sync.Mutex
-	// slug names the room's map: a teleport to another map is refused (ADR 0010).
+	// slug names the room's map.
 	slug    string
 	world   World
 	now     func() time.Time
@@ -48,6 +69,10 @@ type Room struct {
 	lastCells map[string]core.Cell
 	// slow are the members whose queue was full, dropped once the current change is told.
 	slow []string
+	// leaving are the players gone through a door or teleported to another map, handed to `travel` once the lock is
+	// released: a room never holds another room's lock (ADR 0012).
+	leaving []Traveler
+	travel  func(Traveler)
 }
 
 type member struct {
@@ -58,12 +83,22 @@ type member struct {
 	// path is the cells still to step on; nextStepAt when the next step may come.
 	path       []core.Cell
 	nextStepAt time.Time
-	limiter    domain.RequestLimiter
+	// then is where the walk leads once it ends: through a door to another map. Nil for a plain walk.
+	then *domain.Destination
 }
 
-func NewRoom(slug string, world World, now func() time.Time, log *slog.Logger) *Room {
-	return &Room{slug: slug, world: world, now: now, log: log, members: map[string]*member{}, lastCells: map[string]core.Cell{}}
+// NewRoom opens the room of a map. `travel` takes the players going to another map, after the room's lock is released;
+// nil drops them.
+func NewRoom(slug string, world World, now func() time.Time, log *slog.Logger, travel func(Traveler)) *Room {
+	if travel == nil {
+		travel = func(t Traveler) { log.Warn("travel: nowhere to go, dropped", "player", t.Player.ID, "to", t.To) }
+	}
+	return &Room{slug: slug, world: world, now: now, log: log, members: map[string]*member{}, lastCells: map[string]core.Cell{}, travel: travel}
 }
+
+// Slug names the room's map. World is its map, read without the lock: it never changes.
+func (r *Room) Slug() string { return r.slug }
+func (r *Room) World() World { return r.world }
 
 // Run ticks the room every `every` until ctx ends.
 func (r *Room) Run(ctx context.Context, every time.Duration) {
@@ -81,59 +116,125 @@ func (r *Room) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
-// Join puts a player on the map, welcomes them and sends them the chunks around them; the players who see them learn
-// they joined. A player already there (another tab, a refresh) keeps their place and walk: the old connection is
-// closed, and the new one gets everything again. They keep the name and robot of their first connection.
+// Join puts a player on the map's spawn, welcomes them and sends them the chunks around them; the players who see them
+// learn they joined. A player already there (another tab, a refresh) keeps their place and walk: see reconnect.
 func (r *Room) Join(who domain.Profile, client Client) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer r.dropSlow()
 
-	id := who.ID
-	if existing, ok := r.members[id]; ok {
-		r.log.Debug("join: player already here, old connection replaced", "player", id, "name", who.Name, "robot", who.Robot,
-			"kept_robot", existing.player.Robot, "cell", existing.player.Cell, "walking", len(existing.path))
-		existing.client.Close()
-		existing.client = client
-		existing.held = domain.HeldChunks{}
-		r.welcome(existing)
+	if existing, ok := r.members[who.ID]; ok {
+		r.reconnect(existing, who, client)
 		return nil
 	}
-	cell, returning, err := r.spawnCell(id)
+	cell, err := r.world.SpawnPoint()
 	if err != nil {
-		r.log.Warn("join: no cell to spawn on", "player", id, "error", err)
+		r.log.Warn("join: no cell to spawn on", "player", who.ID, "error", err)
 		return fmt.Errorf("Join: %w", err)
 	}
-	joiner := &member{player: domain.Player{ID: id, Name: who.Name, Robot: who.Robot, Cell: cell}, client: client,
-		held: domain.HeldChunks{}, limiter: domain.NewRequestLimiter(r.now())}
-	r.members[id] = joiner
-	r.log.Debug("join", "player", id, "name", who.Name, "robot", who.Robot, "cell", cell, "chunk", core.ChunkOf(cell), "back_where_they_left", returning, "players", len(r.members))
-	r.welcome(joiner)
-	for _, other := range r.others(id) {
-		if other.held.Sees(cell) {
-			r.log.Debug("in view: joined", "player", other.player.ID, "sees", id)
-			r.send(other, domain.Joined{Player: joiner.player})
-		}
-	}
+	r.place(who, client, cell, "join: at the spawn")
 	return nil
 }
 
-// welcome gives a member the chunks around them, then tells them who they are and who they see, then sends the chunks.
+// Return puts a player back where they left this map (ADR 0012): where they stand when they're here on another
+// connection, else the cell they left from. False, with nothing done, when there's none or it isn't walkable anymore.
+func (r *Room) Return(who domain.Profile, client Client) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.dropSlow()
+
+	if existing, ok := r.members[who.ID]; ok {
+		r.reconnect(existing, who, client)
+		return true
+	}
+	cell, remembered := r.lastCells[who.ID]
+	if !remembered || !r.world.IsWalkable(cell) {
+		r.log.Debug("return: nowhere walkable to come back to", "player", who.ID, "remembered", remembered, "cell", cell)
+		return false
+	}
+	r.place(who, client, cell, "return: where they left")
+	return true
+}
+
+// reconnect moves a member to a new connection: the old one is closed, and the new one gets everything again. They
+// keep their place, walk, name and robot.
+func (r *Room) reconnect(existing *member, who domain.Profile, client Client) {
+	r.log.Debug("join: player already here, old connection replaced", "player", who.ID, "name", who.Name, "robot", who.Robot,
+		"kept_robot", existing.player.Robot, "cell", existing.player.Cell, "walking", len(existing.path))
+	existing.client.Close()
+	existing.client = client
+	existing.held = domain.HeldChunks{}
+	r.welcome(existing)
+}
+
+// place stands a new member on a cell, welcomes them, and tells the players who see them.
+func (r *Room) place(who domain.Profile, client Client, cell core.Cell, why string) {
+	joiner := &member{player: domain.Player{ID: who.ID, Name: who.Name, Robot: who.Robot, Cell: cell}, client: client, held: domain.HeldChunks{}}
+	r.members[who.ID] = joiner
+	r.log.Debug(why, "player", who.ID, "name", who.Name, "robot", who.Robot, "cell", cell, "chunk", core.ChunkOf(cell), "players", len(r.members))
+	r.welcome(joiner)
+	r.tellArrival(joiner)
+}
+
+// tellArrival: the players who see a newcomer's cell learn they came.
+func (r *Room) tellArrival(m *member) {
+	for _, other := range r.others(m.player.ID) {
+		if other.held.Sees(m.player.Cell) {
+			r.log.Debug("in view: joined", "player", other.player.ID, "sees", m.player.ID)
+			r.send(other, domain.Joined{Player: m.player})
+		}
+	}
+}
+
+// Admit takes a traveler from another map (ADR 0012): they stand on their cell, are welcomed with this map and its
+// chunks, and told they were teleported if they asked; the players who see them learn they came. The same player
+// already here on another connection is replaced.
+func (r *Room) Admit(t Traveler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.dropSlow()
+
+	id := t.Player.ID
+	if existing, ok := r.members[id]; ok {
+		r.log.Debug("admit: player already here, replaced by the traveler", "player", id)
+		existing.client.Close()
+		r.remove(existing)
+	}
+	arriving := &member{player: t.Player, client: t.Client, held: domain.HeldChunks{}}
+	r.members[id] = arriving
+	r.log.Debug("travel: arrived", "player", id, "from", t.From, "cell", t.Player.Cell, "teleport", t.Teleport, "players", len(r.members))
+	r.welcome(arriving)
+	if t.Teleport {
+		r.send(arriving, domain.Teleported{Cell: t.Player.Cell, Walkable: r.world.IsWalkable(t.Player.Cell)})
+	}
+	r.tellArrival(arriving)
+}
+
+// Remember keeps where a player who isn't here would come back: one who arrived here as their connection ended.
+func (r *Room) Remember(id string, c core.Cell) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastCells[id] = c
+}
+
+// welcome gives a member the chunks around them, then tells them the map, who they are and who they see, then sends
+// the chunks.
 func (r *Room) welcome(m *member) {
 	received := m.held.Receive(r.world.Grid(), m.player.Cell)
-	r.send(m, domain.Welcome{You: m.player.ID, Players: r.seenBy(m), Step: domain.StepInterval})
+	r.send(m, domain.Welcome{You: m.player.ID, Players: r.seenBy(m), Step: domain.StepInterval, Map: r.world.Info()})
 	r.sendChunks(m, received)
 }
 
-// Plan tells the player the path from where they stand to `to`, without moving them.
+// Plan tells the player the path from where they stand to `to`, without moving them, and what going there does
+// (ADR 0012): a dome's cell is entered from beside it, a click outside a city leaves it from its edge.
 func (r *Room) Plan(id string, client Client, to core.Cell) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer r.dropSlow()
 
 	if asker := r.requester(id, client, "plan", to); asker != nil {
-		path := r.findPath(asker, to, "plan")
-		r.send(asker, domain.Planned{To: to, Path: path})
+		action, path := r.planFor(asker, to)
+		r.send(asker, domain.Planned{To: to, Path: path, Action: action})
 	}
 }
 
@@ -145,7 +246,7 @@ func (r *Room) Walk(id string, client Client, to core.Cell) {
 
 	if walker := r.requester(id, client, "walk", to); walker != nil {
 		replaced := len(walker.path)
-		walker.path = r.findPath(walker, to, "walk")
+		walker.path, walker.then = r.findPath(walker, to, "walk"), nil
 		r.log.Debug("walk: path set", "player", id, "steps", len(walker.path), "replaced_steps", replaced,
 			"next_step_in", max(walker.nextStepAt.Sub(r.now()), 0))
 		r.send(walker, domain.Walking{Path: walker.path})
@@ -166,8 +267,9 @@ func (r *Room) findPath(m *member, to core.Cell, request string) []core.Cell {
 	return path
 }
 
-// Tick steps every walker whose next step is due, and tells who sees it.
+// Tick steps every walker whose next step is due, and tells who sees it. Those arriving at a door go through it.
 func (r *Room) Tick() {
+	defer r.sendTravelers()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer r.dropSlow()
@@ -195,16 +297,12 @@ func (r *Room) Leave(id string, client Client) {
 	r.remove(leaver)
 }
 
-// requester is the member sending a request on this connection, nil when it's a replaced connection
-// or the member sends too many.
+// requester is the member sending a request on this connection, nil when it's a replaced connection, or one that left
+// for another map. The session counts requests (ADR 0012).
 func (r *Room) requester(id string, client Client, request string, to core.Cell) *member {
 	m, ok := r.members[id]
-	switch {
-	case !ok || m.client != client:
-		r.log.Debug(request+": ignored, connection replaced", "player", id, "to", to)
-		return nil
-	case !m.limiter.Allow(r.now()):
-		r.log.Debug(request+": ignored, too many requests", "player", id, "to", to, "limit_per_second", domain.MaxRequestsPerSecond)
+	if !ok || m.client != client {
+		r.log.Debug(request+": ignored, connection replaced or gone", "player", id, "to", to)
 		return nil
 	}
 	r.log.Debug(request+": asked", "player", id, "from", m.player.Cell, "to", to)
@@ -219,7 +317,7 @@ func (r *Room) step(walker *member, now time.Time) {
 	if err := domain.CheckStep(r.world.Grid(), walker.player.Cell, next, r.world.IsWalkable); err != nil {
 		r.log.Debug("step: walk stopped", "player", walker.player.ID, "cell", walker.player.Cell, "next", next,
 			"reason", err, "dropped_steps", len(walker.path))
-		walker.path = nil
+		walker.path, walker.then = nil, nil
 		r.send(walker, domain.Stopped{Cell: walker.player.Cell})
 		return
 	}
@@ -231,12 +329,15 @@ func (r *Room) step(walker *member, now time.Time) {
 	}
 	r.send(walker, domain.Moved{ID: walker.player.ID, Cell: next})
 	r.arrived(walker, from)
+	if len(walker.path) == 0 && walker.then != nil {
+		r.depart(walker, *walker.then, false)
+	}
 }
 
-// Teleport puts the player on a cell of this map, walkable or not, and drops their walk (ADR 0010). Another map, or
-// a cell outside this one, is refused with why. Then everything goes as after a step: their chunks follow them, and
-// the others see them go or come.
-func (r *Room) Teleport(id string, client Client, toMap string, to core.Cell) {
+// Teleport puts the player on a cell of this map, walkable or not, and drops their walk (ADR 0010). A cell outside
+// the map is refused with why. Then everything goes as after a step: their chunks follow them, and the others see
+// them go or come. A teleport to another map goes through the hub (ADR 0012).
+func (r *Room) Teleport(id string, client Client, to core.Cell) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer r.dropSlow()
@@ -245,14 +346,14 @@ func (r *Room) Teleport(id string, client Client, toMap string, to core.Cell) {
 	if mover == nil {
 		return
 	}
-	if err := domain.CheckTeleport(r.slug, r.world.Grid(), toMap, to); err != nil {
-		r.log.Debug("teleport: refused", "player", id, "map", toMap, "to", to, "reason", err)
+	if err := domain.CheckTeleport(r.world.Grid(), to); err != nil {
+		r.log.Debug("teleport: refused", "player", id, "map", r.slug, "to", to, "reason", err)
 		r.send(mover, domain.Refused{Request: "teleport", Reason: err.Error()})
 		return
 	}
 	from, walkable := mover.player.Cell, r.world.IsWalkable(to)
 	r.log.Debug("teleport: done", "player", id, "from", from, "to", to, "walkable", walkable, "dropped_steps", len(mover.path))
-	mover.player.Cell, mover.path = to, nil
+	mover.player.Cell, mover.path, mover.then = to, nil, nil
 	r.send(mover, domain.Teleported{Cell: to, Walkable: walkable})
 	r.arrived(mover, from)
 }
@@ -319,15 +420,6 @@ func (r *Room) sendChunks(m *member, keys []core.ChunkKey) {
 			r.send(m, domain.ChunkShown{Chunk: contents})
 		}
 	}
-}
-
-// spawnCell is where a joining player appears, and whether it's where they left.
-func (r *Room) spawnCell(id string) (core.Cell, bool, error) {
-	if cell, ok := r.lastCells[id]; ok && r.world.IsWalkable(cell) {
-		return cell, true, nil
-	}
-	cell, err := r.world.SpawnPoint()
-	return cell, false, err
 }
 
 // seenBy is the players a member sees, them included, by id.

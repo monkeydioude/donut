@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createIsoProjection, type ScreenPoint, type TilePoint } from '../iso/projection';
 import {
+  backOnPlayer,
   cameraCenter,
   centerOnPlayer,
   createCamera,
@@ -71,6 +72,22 @@ describe('centerOnPlayer', () => {
 
   it('changes nothing when locked', () => {
     expect(centerOnPlayer(locked, player)).toBe(locked);
+  });
+});
+
+// ADR 0012: entering or leaving a city
+describe('backOnPlayer', () => {
+  it('puts a free camera back on your player, wherever they are, and it follows them until moved', () => {
+    const back = backOnPlayer(freeAt(at(1021, 511), 4));
+    expect(back).toEqual({ locked: false, zoom: 4, center: null });
+    expect(cameraCenter(back, at(15, 15))).toEqual(at(15, 15));
+    expect(cameraCenter(followPlayer(back, at(16, 15), rules), at(16, 15))).toEqual(at(16, 15));
+  });
+
+  it('changes nothing when locked, or already on your player', () => {
+    expect(backOnPlayer(locked)).toBe(locked);
+    const following = initialCamera(false, 3);
+    expect(backOnPlayer(following)).toBe(following);
   });
 });
 
@@ -200,5 +217,19 @@ describe('createCamera', () => {
 
   it('places the world on your player at the starting zoom', () => {
     expect(setup(false).camera.place()).toEqual(worldPlacement(locked, player, viewport));
+  });
+
+  it('after a map switch, places a free camera on your player on the new map, still free', () => {
+    let you: ScreenPoint | null = at(1021, 511);
+    const camera = createCamera({ rules, start: initialCamera(true, 3), player: () => you, viewport: () => viewport, saveLock: () => true });
+    camera.toggleLock();
+    camera.pan({ x: 300, y: 0 });
+
+    you = null;
+    camera.recenter();
+    expect(camera.place()).toBeNull();
+    you = at(15, 15);
+    expect(camera.place()).toEqual(worldPlacement(locked, at(15, 15), viewport));
+    expect(camera.locked()).toBe(false);
   });
 });

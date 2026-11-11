@@ -2,6 +2,7 @@ import { Container, Sprite, type Texture } from 'pixi.js';
 import { FLAT_BLOCK, type BlockShape } from '../art/block';
 import type { FaceMaterial, FaceSide } from '../art/cliff';
 import { CORNER_STEPS, CORNERS, EDGE_STEPS, EDGES, type Corner, type Edge } from '../art/edges';
+import { floorLookOf, glassLookOf } from '../art/city';
 import { patternPlace } from '../art/facets';
 import { WATER_FRAMES } from '../art/water';
 import { pickForCell } from '../core/rng';
@@ -10,10 +11,10 @@ import { groundCenterAt, type Heights } from '../iso/heights';
 import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { localIndex, terrainAt, type CellTerrain, type Chunk, type HeldChunksRef } from '../map/chunks';
 import { CHUNK_SIZE, chunkId, chunkOrigin, chunksAround, nearestCopy, normalize, type ChunkKey, type Grid } from '../map/grid';
-import { MIN_HEIGHT, type BakedGroundKind } from '../map/worldMap';
-import { placeOnCell } from './mapView';
+import { MIN_HEIGHT, type BakedGroundKind, type MapObject } from '../map/worldMap';
+import { placeObject } from './mapView';
 import type { FrameTicker } from './playersView';
-import type { SpriteGraphic, WorldGraphics } from './tileGraphics';
+import type { ObjectGraphic, SpriteGraphic, WorldGraphics } from './tileGraphics';
 
 /** A cliff face of a cell: on which side, and how many levels it goes down. */
 export interface PlacedFace {
@@ -25,6 +26,7 @@ export interface PlacedFace {
 export interface PlacedTile {
   kind: BakedGroundKind;
   cell: TilePoint;
+  height: number;
   /** From the chunk's first cell, drawn flat. */
   local: ScreenPoint;
   depth: number;
@@ -78,10 +80,33 @@ export type Bake = (container: Container) => Baked;
 export interface ChunksView {
   /** Draws a chunk that came in, and again the held chunks beside it: their faces and edges depend on it. */
   show(chunk: Chunk): void;
-  /** Destroys a forgotten chunk's textures and rocks. */
+  /** Destroys a forgotten chunk's textures and objects. */
   forget(key: ChunkKey): void;
   /** Moves every chunk to its copy nearest to your drawn cell, which moved. */
   follow(anchor: TilePoint): void;
+  /** The map cell of the dome drawn at a world point, by its opaque pixels; null when there's none (ADR 0012). */
+  objectAt(point: ScreenPoint): TilePoint | null;
+  /** Destroys every chunk shown and its textures: the game left this map (ADR 0012). */
+  clear(): void;
+}
+
+/** An object drawn somewhere: its sprite's position and draw order, its graphic, and its map cell. */
+export interface DrawnObject {
+  position: ScreenPoint;
+  zIndex: number;
+  graphic: ObjectGraphic;
+  cell: TilePoint;
+}
+
+/** The frontmost of the objects whose opaque pixels hold the world point: its map cell, or null. */
+export function pickObject(objects: readonly DrawnObject[], point: ScreenPoint): TilePoint | null {
+  let picked: DrawnObject | null = null;
+  for (const object of objects) {
+    const x = point.x - object.position.x + object.graphic.pivot.x;
+    const y = point.y - object.position.y + object.graphic.pivot.y;
+    if (object.graphic.opaqueAt(x, y) && (!picked || object.zIndex > picked.zIndex)) picked = object;
+  }
+  return picked ? picked.cell : null;
 }
 
 export interface ChunksViewDeps {
@@ -135,7 +160,7 @@ export function layoutChunk(chunk: Chunk, heights: Heights, around: TerrainAroun
     else {
       const faces = facesOf(cell, height, terrain);
       const block = blockOf(cell, kind, height, terrain);
-      tiles.push({ kind, cell, local: at, depth: heights.projection.depth(local), faces, edges, ...rimsOf(cell, height, terrain), block });
+      tiles.push({ kind, cell, height, local: at, depth: heights.projection.depth(local), faces, edges, ...rimsOf(cell, height, terrain), block });
     }
   });
   return { tiles: tiles.sort((a, b) => a.depth - b.depth), water };
@@ -264,7 +289,7 @@ interface ShownChunk {
   /** Null for a chunk with no ground to bake: all void or water. */
   ground: { sprite: Sprite; baked: Baked } | null;
   water: { layer: Container; tiles: { sprite: Sprite; foam: Edge[] }[] };
-  rocks: { sprite: Sprite; cell: TilePoint; height: number }[];
+  objects: { sprite: Sprite; object: MapObject; graphic: ObjectGraphic; height: number }[];
   /** Where the chunk's first cell is drawn. */
   drawnOrigin: TilePoint;
 }
@@ -289,9 +314,9 @@ export function createChunksView(deps: ChunksViewDeps): ChunksView {
     }
     chunk.water.layer.position.set(screen.x, screen.y);
     const origin = chunkOrigin(chunk.key);
-    for (const rock of chunk.rocks) {
-      const cell = { col: rock.cell.col - origin.col + drawnOrigin.col, row: rock.cell.row - origin.row + drawnOrigin.row };
-      placeOnCell(rock.sprite, cell, heights, rock.height);
+    for (const { sprite, object, height } of chunk.objects) {
+      const back = { col: object.col - origin.col + drawnOrigin.col, row: object.row - origin.row + drawnOrigin.row };
+      placeObject(sprite, object.kind, back, heights, height);
     }
   };
 
@@ -300,7 +325,7 @@ export function createChunksView(deps: ChunksViewDeps): ChunksView {
     if (!chunk) return;
     chunk.ground?.sprite.destroy({ texture: true, textureSource: true });
     chunk.water.layer.destroy({ children: true });
-    for (const rock of chunk.rocks) rock.sprite.destroy();
+    for (const { sprite } of chunk.objects) sprite.destroy();
     shown.delete(id);
   };
 
@@ -313,12 +338,13 @@ export function createChunksView(deps: ChunksViewDeps): ChunksView {
     if (ground) deps.ground.addChild(ground.sprite);
     const water = drawWater(layout.water, graphics, flowFrame);
     deps.water.addChild(water.layer);
-    const rocks = chunk.objects.map((object) => {
-      const sprite = cellSprite(pickForCell(graphics.objects[object.kind], object.col, object.row, ROCK_SALT));
+    const objects = chunk.objects.map((object) => {
+      const graphic = pickForCell(graphics.objects[object.kind], object.col, object.row, ROCK_SALT);
+      const sprite = cellSprite(graphic);
       deps.entities.addChild(sprite);
-      return { sprite, cell: { col: object.col, row: object.row }, height: chunk.height[localIndex(chunk.key, object)] ?? 0 };
+      return { sprite, object, graphic, height: chunk.height[localIndex(chunk.key, object)] ?? 0 };
     });
-    const entry: ShownChunk = { key: chunk.key, ground, water, rocks, drawnOrigin: chunkOrigin(chunk.key) };
+    const entry: ShownChunk = { key: chunk.key, ground, water, objects, drawnOrigin: chunkOrigin(chunk.key) };
     shown.set(id, entry);
     const anchor = deps.anchor();
     place(entry, anchor ? drawnChunkOrigin(grid, chunk.key, anchor) : chunkOrigin(chunk.key));
@@ -326,7 +352,7 @@ export function createChunksView(deps: ChunksViewDeps): ChunksView {
       chunk: id,
       drawnOrigin: entry.drawnOrigin,
       water: water.tiles.length,
-      rocks: rocks.length,
+      objects: objects.length,
       ms: Math.round(now() - started),
       shown: shown.size,
     });
@@ -376,6 +402,20 @@ export function createChunksView(deps: ChunksViewDeps): ChunksView {
         }
       }
     },
+    clear() {
+      log('every chunk cleared', { shown: shown.size });
+      arrived = [];
+      for (const id of [...shown.keys()]) remove(id);
+    },
+    objectAt(point) {
+      const domes: DrawnObject[] = [];
+      for (const chunk of shown.values()) {
+        for (const { sprite, object, graphic } of chunk.objects) {
+          if (object.kind === 'dome') domes.push({ position: sprite.position, zIndex: sprite.zIndex, graphic, cell: { col: object.col, row: object.row } });
+        }
+      }
+      return pickObject(domes, point);
+    },
   };
 }
 
@@ -398,8 +438,7 @@ function drawGround(tiles: readonly PlacedTile[], graphics: WorldGraphics, level
   for (const tile of tiles) {
     for (const face of tile.faces) {
       for (let level = 0; level < face.levels; level++) {
-        const graphic = graphics.terrain.face(faceMaterial(tile.kind), face.side);
-        container.addChild(spriteAt(graphic, { x: tile.local.x, y: tile.local.y + level * levelPx }));
+        container.addChild(spriteAt(faceOf(tile, face.side, level, graphics), { x: tile.local.x, y: tile.local.y + level * levelPx }));
       }
     }
     container.addChild(spriteAt(topOf(tile, graphics), tile.local));
@@ -409,6 +448,12 @@ function drawGround(tiles: readonly PlacedTile[], graphics: WorldGraphics, level
   }
   const baked = bake(container);
   return { sprite: new Sprite(baked.texture), baked };
+}
+
+/** One level of a tile's face: a wall's is glass, its panels picked from its place (ADR 0012). */
+function faceOf(tile: PlacedTile, side: FaceSide, level: number, graphics: WorldGraphics): SpriteGraphic {
+  if (tile.kind === 'wall') return graphics.terrain.glass(side, glassLookOf(tile.cell, tile.height, level));
+  return graphics.terrain.face(faceMaterial(tile.kind), side);
 }
 
 function topOf(tile: PlacedTile, graphics: WorldGraphics): SpriteGraphic {
@@ -425,6 +470,10 @@ function topOf(tile: PlacedTile, graphics: WorldGraphics): SpriteGraphic {
       return graphics.terrain.mountain({ place: patternPlace(tile.cell), outline: tile.block?.outline ?? [], shape: tile.block?.shape ?? FLAT_BLOCK, iced: tile.block?.iced ?? false });
     case 'glacier':
       return graphics.terrain.glacier({ place: patternPlace(tile.cell), edges: tile.block?.outline ?? [], shape: tile.block?.shape ?? FLAT_BLOCK });
+    case 'floor':
+      return graphics.terrain.floor(floorLookOf(tile.cell));
+    case 'wall':
+      return graphics.terrain.wallTop();
   }
 }
 

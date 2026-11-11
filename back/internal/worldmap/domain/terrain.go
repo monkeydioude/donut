@@ -35,7 +35,7 @@ func NewTerrain(m Map) Terrain {
 	return t
 }
 
-// walkableCells: every cell whose ground is walkable, but those with an object on them.
+// walkableCells: every cell whose ground is walkable, but those an object covers.
 func walkableCells(m Map) []bool {
 	grid := m.Grid()
 	walkable := make([]bool, grid.Width*grid.Height)
@@ -47,8 +47,10 @@ func walkableCells(m Map) []bool {
 		}
 	}
 	for _, object := range m.Objects {
-		if grid.Contains(object.Cell()) {
-			walkable[grid.Index(object.Cell())] = false
+		for _, cell := range object.Footprint() {
+			if grid.Contains(cell) {
+				walkable[grid.Index(cell)] = false
+			}
 		}
 	}
 	return walkable

@@ -11,11 +11,13 @@ type Event interface {
 	event()
 }
 
-// Welcome greets a player who joined: who they are, the players they see them included, and the time of a step.
+// Welcome greets a player who joined, or arrived from another map: the map, who they are, the players they see them
+// included, and the time of a step (ADR 0012).
 type Welcome struct {
 	You     string
 	Players []Player
 	Step    time.Duration
+	Map     core.MapInfo
 }
 
 // Joined: another player came into view: they arrived on the map, or onto a chunk you hold, or a chunk they stand on
@@ -45,11 +47,22 @@ type ChunkForgotten struct {
 	Key core.ChunkKey
 }
 
-// Planned answers a plan: the path from where you stand to To, empty when there is none.
+// Planned answers a plan: the path from where you stand to To, empty when there is none, and what going there does
+// (ADR 0012). For Enter or Exit from where one goes through at once, the path is the cell one stands on.
 type Planned struct {
-	To   core.Cell
-	Path []core.Cell
+	To     core.Cell
+	Path   []core.Cell
+	Action Action
 }
+
+// Action is what a click on a cell does: move there, enter the dome there, or leave the city (ADR 0012).
+type Action string
+
+const (
+	ActionMove  Action = "move"
+	ActionEnter Action = "enter"
+	ActionExit  Action = "exit"
+)
 
 // Walking: the path the server walks you along, empty when there is nowhere to go.
 type Walking struct {

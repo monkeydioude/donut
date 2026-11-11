@@ -38,6 +38,14 @@ export function centerOnPlayer(camera: CameraState, player: ScreenPoint): Camera
   return camera.locked ? camera : { ...camera, center: player };
 }
 
+/**
+ * On another map, a free camera goes back onto your player, wherever they appear, and follows them until it's moved, as
+ * when the game starts (ADR 0012). It stays free, at its zoom. Same state when locked or already on them.
+ */
+export function backOnPlayer(camera: CameraState): CameraState {
+  return camera.center === null ? camera : { ...camera, center: null };
+}
+
 /** A free camera follows a drag of `delta` screen pixels: the world moves with the mouse, pixel for pixel. */
 export function pan(camera: CameraState, delta: ScreenPoint, player: ScreenPoint, rules: CameraRules): CameraState {
   if (camera.locked) return camera;
@@ -107,6 +115,8 @@ export interface Camera {
   locked(): boolean;
   toggleLock(): void;
   center(): void;
+  /** Back onto your player after a map switch, before they show on the new map: see `backOnPlayer`. */
+  recenter(): void;
   pan(delta: ScreenPoint): void;
   /** One zoom step. `at`, the pointer on the canvas, stays still when the camera is free (the wheel). */
   zoom(step: 1 | -1, at?: ScreenPoint): void;
@@ -138,6 +148,11 @@ export function createCamera(deps: CameraDeps): Camera {
     },
     center() {
       if (!camera.locked && change(centerOnPlayer)) log('back on your player');
+    },
+    recenter() {
+      const before = camera;
+      camera = backOnPlayer(camera);
+      if (camera !== before) log('back on your player, on another map');
     },
     pan(delta) {
       change((c, player) => pan(c, delta, player, deps.rules));

@@ -26,7 +26,7 @@ const (
 // MapFile is a map folder's files, by name.
 type MapFile map[string][]byte
 
-// manifest is map.json: the map without its cells.
+// manifest is map.json: the map without its cells, and its domes (ADR 0012).
 type manifest struct {
 	Format  int              `json:"format"`
 	Slug    string           `json:"slug"`
@@ -35,6 +35,14 @@ type manifest struct {
 	Height  int              `json:"height"`
 	Wraps   bool             `json:"wraps"`
 	Regions []manifestRegion `json:"regions"`
+	Domes   []manifestDome   `json:"domes,omitempty"`
+}
+
+// manifestDome is a dome: its back cell, and the slug of the map it leads to.
+type manifestDome struct {
+	Col int    `json:"col"`
+	Row int    `json:"row"`
+	Map string `json:"map"`
 }
 
 // manifestRegion is a region, with the color it's painted in regions.png.
@@ -78,6 +86,11 @@ func manifestOf(m domain.Map) manifest {
 	for _, region := range m.Regions {
 		rgb := regionColor(region.ID)
 		man.Regions = append(man.Regions, manifestRegion{ID: region.ID, Name: region.Name, Biome: region.Biome, Color: hexColor(rgb), rgb: rgb})
+	}
+	for _, object := range m.Objects {
+		if object.Kind == domain.ObjectDome {
+			man.Domes = append(man.Domes, manifestDome{Col: object.Col, Row: object.Row, Map: object.LeadsTo})
+		}
 	}
 	return man
 }
@@ -141,10 +154,25 @@ func DecodeMapFile(folder fs.FS) (domain.Map, error) {
 	if m.Objects, err = readRocks(folder, m); err != nil {
 		return domain.Map{}, err
 	}
+	m.Objects = append(m.Objects, man.domes()...)
 	if err := m.Validate(); err != nil {
 		return domain.Map{}, fmt.Errorf("map file: %w", err)
 	}
 	return m, nil
+}
+
+// CheckDomes: each dome of a map leads to a map whose folder is in `maps`, the folder of map folders (ADR 0012). The
+// map's own checks have made sure each one leads to a slug, so it names a folder of `maps`, never a path out of it.
+func CheckDomes(m domain.Map, maps fs.FS) error {
+	for _, object := range m.Objects {
+		if object.Kind != domain.ObjectDome {
+			continue
+		}
+		if _, err := fs.Stat(maps, object.LeadsTo+"/"+manifestFile); err != nil {
+			return fmt.Errorf("map file: %s: the dome at (%d, %d) leads to %q, which has no map folder", manifestFile, object.Col, object.Row, object.LeadsTo)
+		}
+	}
+	return nil
 }
 
 // readManifest reads map.json, and checks its format, its size and regions, and its colors, before any layer is read.
@@ -185,6 +213,14 @@ func (man *manifest) parseColors() error {
 
 func (man manifest) summary() domain.Summary {
 	return domain.Summary{Slug: man.Slug, Name: man.Name, Width: man.Width, Height: man.Height, Wraps: man.Wraps}
+}
+
+func (man manifest) domes() []domain.Object {
+	domes := []domain.Object{}
+	for _, dome := range man.Domes {
+		domes = append(domes, domain.Object{Kind: domain.ObjectDome, Col: dome.Col, Row: dome.Row, LeadsTo: dome.Map})
+	}
+	return domes
 }
 
 func (man manifest) regions() []domain.Region {

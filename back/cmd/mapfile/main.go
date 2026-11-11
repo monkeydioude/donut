@@ -1,10 +1,12 @@
 // Command mapfile makes and checks map folders (ADR 0007), from back/:
 //
 //	go run ./cmd/mapfile generate -seed 42 -out mapfiles/world [-force]
+//	go run ./cmd/mapfile city -out mapfiles/doma-1 [-force]
 //	go run ./cmd/mapfile check mapfiles/world
 //
-// generate writes the starter world from its seed, and refuses to overwrite a folder that has files without -force:
-// they may hold hand edits. check reads a folder as the server would, and names its first problem.
+// generate writes the starter world from its seed, city Doma-1's map (ADR 0012). Both refuse to overwrite a folder
+// that has files without -force: they may hold hand edits. check reads a folder as the server would, and names its
+// first problem: a dome must lead to a map folder beside it.
 package main
 
 import (
@@ -22,7 +24,7 @@ import (
 	"donut/internal/worldmap/infra"
 )
 
-var errUsage = errors.New("usage: mapfile generate -seed <n> -out <folder> [-force] | mapfile check <folder>")
+var errUsage = errors.New("usage: mapfile generate -seed <n> -out <folder> [-force] | mapfile city -out <folder> [-force] | mapfile check <folder>")
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -39,6 +41,8 @@ func run(args []string, log *slog.Logger) error {
 	switch args[0] {
 	case "generate":
 		return generate(args[1:], log)
+	case "city":
+		return city(args[1:], log)
 	case "check":
 		if len(args) != 2 {
 			return errUsage
@@ -63,6 +67,27 @@ func generate(args []string, log *slog.Logger) error {
 	world := domain.Generate(domain.StarterWorld(), rand.New(rand.NewPCG(*seed, *seed)))
 	logWorld(world, *seed, time.Since(start), log)
 	file, err := infra.EncodeMapFile(world)
+	if err != nil {
+		return err
+	}
+	return writeFolder(*out, file, log)
+}
+
+// city writes Doma-1's map, the first dome city (ADR 0012).
+func city(args []string, log *slog.Logger) error {
+	flags := flag.NewFlagSet("city", flag.ContinueOnError)
+	out := flags.String("out", "", "the map folder to write")
+	force := flags.Bool("force", false, "overwrite a folder that has files")
+	if err := flags.Parse(args); err != nil || *out == "" {
+		return errUsage
+	}
+	if err := refuseToOverwrite(*out, *force); err != nil {
+		return err
+	}
+	m := domain.GenerateCity(domain.Doma1())
+	spawn, err := domain.NewTerrain(m).SpawnPoint()
+	log.Info("city generated", "slug", m.Slug, "size", fmt.Sprintf("%dx%d", m.Width, m.Height), "spawn", spawn, "spawn_error", err)
+	file, err := infra.EncodeMapFile(m)
 	if err != nil {
 		return err
 	}
@@ -129,6 +154,9 @@ func check(folder string, log *slog.Logger) error {
 	start := time.Now()
 	m, err := infra.DecodeMapFile(os.DirFS(folder))
 	if err != nil {
+		return err
+	}
+	if err := infra.CheckDomes(m, os.DirFS(filepath.Dir(folder))); err != nil {
 		return err
 	}
 	log.Info("map folder checked", "folder", folder, "slug", m.Slug, "size", fmt.Sprintf("%dx%d", m.Width, m.Height),

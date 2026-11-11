@@ -14,13 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	core "donut/internal/core/domain"
 	"donut/internal/worldmap/app"
 	"donut/internal/worldmap/domain"
 	httptransport "donut/internal/worldmap/transport/http"
 	"donut/pkg/errd"
 )
 
-// fakeMaps holds one map, "world".
+// fakeMaps holds two maps: "world", and the city "doma-1" standing on it.
 type fakeMaps struct{}
 
 func (fakeMaps) ListMaps(context.Context) ([]domain.Summary, error) {
@@ -28,10 +29,17 @@ func (fakeMaps) ListMaps(context.Context) ([]domain.Summary, error) {
 }
 
 func (fakeMaps) Description(_ context.Context, slug string) (domain.Description, error) {
-	if slug != "world" {
-		return domain.Description{}, fmt.Errorf("Description: %w", errd.ErrNotFound)
+	switch slug {
+	case "world":
+		return world(), nil
+	case "doma-1":
+		return domain.Description{
+			Summary:  domain.Summary{ID: "m2", Slug: "doma-1", Name: "Doma-1", Width: 32, Height: 32},
+			Regions:  []domain.Region{{ID: 1, Name: "Doma-1", Biome: domain.BiomeDome}},
+			StandsOn: &core.Place{Map: "world", Col: 1022, Row: 510, Width: 1024, Height: 512},
+		}, nil
 	}
-	return world(), nil
+	return domain.Description{}, fmt.Errorf("Description: %w", errd.ErrNotFound)
 }
 
 // worldETag is the ETag of the fake world's image.
@@ -77,7 +85,20 @@ func TestGetMap(t *testing.T) {
 		assert.JSONEq(t, `{
 			"id": "m1", "slug": "world", "name": "World", "width": 1024, "height": 512, "wraps": true,
 			"chunkSize": 32,
-			"regions": [{"id": 1, "name": "Sprinkle Meadow", "biome": "meadow"}]
+			"regions": [{"id": 1, "name": "Sprinkle Meadow", "biome": "meadow"}],
+			"standsOn": null
+		}`, res.Body.String())
+	})
+
+	// ADR 0012 test 12
+	t.Run("a city tells where it stands", func(t *testing.T) {
+		res := serve(t, "/api/maps/doma-1")
+		require.Equal(t, http.StatusOK, res.Code)
+		assert.JSONEq(t, `{
+			"id": "m2", "slug": "doma-1", "name": "Doma-1", "width": 32, "height": 32, "wraps": false,
+			"chunkSize": 32,
+			"regions": [{"id": 1, "name": "Doma-1", "biome": "dome"}],
+			"standsOn": {"map": "world", "col": 1022, "row": 510, "width": 1024, "height": 512}
 		}`, res.Body.String())
 	})
 

@@ -1,3 +1,4 @@
+import type { MapDescription } from '../map/worldMap';
 import type { Cell, ServerMessage } from '../net/protocol';
 
 /** A line of the chatbox: what you typed, the log of what happens in view, a warning, or an error. */
@@ -48,6 +49,13 @@ export function logMessage(state: GameLogState, message: ServerMessage, context:
     default:
       return { state, lines: [] };
   }
+}
+
+/** The lines of a move between maps (ADR 0012): into a city, "You enter Doma-1"; out of one, "You leave Doma-1". */
+export function logMapSwitch(from: MapDescription, to: MapDescription): LogLine[] {
+  if (!to.wraps) return [log(`You enter ${to.name}`)];
+  if (!from.wraps) return [log(`You leave ${from.name}`)];
+  return [];
 }
 
 /** The line for choosing Move toward a cell. */

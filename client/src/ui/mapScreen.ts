@@ -1,6 +1,6 @@
 import { silent, type Log } from '../debug/log';
 import { exploredShare, exploredText, isExplored, type Exploration } from '../game/exploration';
-import { blinkOn, donutMark, mapCellAt, mapScale, rectangleMark, type DonutRing, type DonutShape, type Size } from '../game/mapMarks';
+import { blinkOn, donutMark, donutPlace, mapCellAt, mapScale, rectangleMark, regionLine, type DonutRing, type DonutShape, type Size } from '../game/mapMarks';
 import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { CHUNK_SIZE, type Grid } from '../map/grid';
 import { gridOf, type MapDescription } from '../map/worldMap';
@@ -40,6 +40,8 @@ export interface MapScreen {
   update(view: MapView): void;
   close(): void;
   isOpen(): boolean;
+  /** Takes the screen off the page: the game left this map (ADR 0012). */
+  destroy(): void;
 }
 
 /** The margin left around the map on the screen, in CSS pixels, on each side. */
@@ -77,10 +79,12 @@ export function createMapScreen(deps: MapScreenDeps): MapScreen {
     });
   };
   const showYou = (cell: TilePoint | null) => {
-    dom.you.hidden = dom.donutMark.hidden = !cell;
-    if (!cell) return;
-    placeAt(dom.you, rectangleMark(cell, scale));
-    const mark = donutMark(cell, grid, deps.art.ring);
+    dom.you.hidden = !cell;
+    if (cell) placeAt(dom.you, rectangleMark(cell, scale));
+    const onDonut = donutPlace(deps.map, cell);
+    dom.donutMark.hidden = !onDonut;
+    if (!onDonut) return;
+    const mark = donutMark(onDonut.cell, onDonut.grid, deps.art.ring);
     setSource(dom.donutMark, deps.art.you[mark.shape]);
     placeAt(dom.donutMark, { x: mark.at.x * deps.art.scale, y: mark.at.y * deps.art.scale });
   };
@@ -103,7 +107,7 @@ export function createMapScreen(deps: MapScreenDeps): MapScreen {
     },
     update(view) {
       fit();
-      dom.region.textContent = view.regionName ?? '';
+      dom.region.textContent = regionLine(deps.map.name, view.regionName);
       showExplored(view.explored);
       showOthers(view.others);
       showYou(view.you);
@@ -115,6 +119,7 @@ export function createMapScreen(deps: MapScreenDeps): MapScreen {
       log('closed', { explored: dom.explored.textContent });
     },
     isOpen: () => !dom.backdrop.hidden,
+    destroy: () => dom.backdrop.remove(),
   };
   return screen;
 }
@@ -152,7 +157,8 @@ function buildScreen(host: HTMLElement, map: MapDescription, art: MapArt, grid: 
   element('div', 'map-name', titles).textContent = map.name;
   const region = element('div', 'map-region', titles);
   const donutBox = element('div', 'map-donut', block);
-  donutBox.hidden = !grid.wraps;
+  // the donut shows on the world, and in a city where it stands on it (ADR 0012)
+  donutBox.hidden = !grid.wraps && !map.standsOn;
   image(donutBox, art.donut, 'map-donut-image');
   const donutMark = markImage(donutBox, art.you.square, 'map-you');
   const explored = element('div', 'map-explored map-over', block);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { worldDescription } from '../testing/maps';
 import type { PlayerInfo } from '../net/protocol';
 import { applyMessage, emptyPlayers, ownPlayer, type PlayersState } from './players';
 
@@ -6,7 +7,7 @@ const ann: PlayerInfo = { id: 'a', name: 'Ann', robot: 'dome-head', col: 2, row:
 const bob: PlayerInfo = { id: 'b', name: 'Bob', robot: 'rusty-toy', col: 3, row: 3 };
 
 const welcomed = (): PlayersState =>
-  applyMessage(emptyPlayers(), { type: 'welcome', you: 'a', players: [ann, bob], stepMs: 250 });
+  applyMessage(emptyPlayers(), { type: 'welcome', you: 'a', players: [ann, bob], stepMs: 250, map: worldDescription() });
 const list = (state: PlayersState) => [...state.players.values()];
 
 // ADR 0001 test 23
@@ -38,7 +39,7 @@ describe('applyMessage', () => {
 
   it('paths move nobody', () => {
     const before = welcomed();
-    expect(applyMessage(before, { type: 'planned', col: 4, row: 4, path: [{ col: 3, row: 3 }] })).toBe(before);
+    expect(applyMessage(before, { type: 'planned', col: 4, row: 4, path: [{ col: 3, row: 3 }], action: 'move' })).toBe(before);
     expect(applyMessage(before, { type: 'walking', path: [{ col: 3, row: 3 }] })).toBe(before);
   });
 

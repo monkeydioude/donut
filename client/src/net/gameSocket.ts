@@ -1,5 +1,5 @@
 import { silent, type Log } from '../debug/log';
-import { decodeServerMessage, encodePlan, encodeTeleport, encodeWalk, type Cell, type ServerMessage } from './protocol';
+import { decodeServerMessage, encodeEnter, encodeExit, encodePlan, encodeTeleport, encodeWalk, type Cell, type ServerMessage } from './protocol';
 
 export interface GameSocket {
   /** Asks the path from your player to a cell: the answer comes as a `planned` message. */
@@ -8,6 +8,9 @@ export interface GameSocket {
   walk(to: Cell): void;
   /** Asks the server to put your player on a cell of a map: it answers `teleported` or `refused` (ADR 0010). */
   teleport(map: string, to: Cell): void;
+  /** Asks to go into the dome on a cell, or out of the city by a click on a cell: like a walk, then `welcome` (ADR 0012). */
+  enter(dome: Cell): void;
+  exit(clicked: Cell): void;
   close(): void;
 }
 
@@ -18,7 +21,8 @@ export interface GameSocketHandlers {
 }
 
 /**
- * Opens the websocket of a map. Messages the client doesn't understand are dropped.
+ * Opens the game's websocket (ADR 0012): the server puts you on your map. Messages the client doesn't understand are
+ * dropped.
  * Logs only the URL's path: its query carries your secret guest id.
  */
 export function openGameSocket(url: string, handlers: GameSocketHandlers, log: Log = silent): GameSocket {
@@ -51,6 +55,8 @@ export function openGameSocket(url: string, handlers: GameSocketHandlers, log: L
     plan: (to) => send(encodePlan(to)),
     walk: (to) => send(encodeWalk(to)),
     teleport: (map, to) => send(encodeTeleport(map, to)),
+    enter: (dome) => send(encodeEnter(dome)),
+    exit: (clicked) => send(encodeExit(clicked)),
     close: () => {
       log('closing');
       socket.close();

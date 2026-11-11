@@ -1,6 +1,7 @@
 import { CanvasSource, Texture } from 'pixi.js';
 import type { Rng } from '../core/rng';
 import { shapeKey } from '../art/block';
+import { floorKey, glassKey, type FloorLook, type GlassLook } from '../art/city';
 import type { FaceMaterial, FaceSide } from '../art/cliff';
 import { edgesKey, type Corner, type Edge } from '../art/edges';
 import type { GlacierLook } from '../art/glacier';
@@ -16,6 +17,12 @@ export interface SpriteGraphic {
   pivot: { x: number; y: number };
 }
 
+/** An object's sprite, which also tells where it's drawn: the pointer picks a dome by its pixels (ADR 0012). */
+export interface ObjectGraphic extends SpriteGraphic {
+  /** True on the texture's opaque pixels. */
+  opaqueAt(x: number, y: number): boolean;
+}
+
 /** The terrain's sprites, painted the first time they're needed, then kept. */
 export interface TerrainGraphics {
   face(material: FaceMaterial, side: FaceSide): SpriteGraphic;
@@ -26,12 +33,15 @@ export interface TerrainGraphics {
   bridge(rails: readonly Edge[]): SpriteGraphic;
   mountain(look: MountainLook): SpriteGraphic;
   glacier(look: GlacierLook): SpriteGraphic;
+  floor(look: FloorLook): SpriteGraphic;
+  wallTop(): SpriteGraphic;
+  glass(side: FaceSide, look: GlassLook): SpriteGraphic;
 }
 
 /** Several variants of grass and of each object kind, so the world doesn't look repetitive; the terrain's pieces. */
 export interface WorldGraphics {
   grass: readonly SpriteGraphic[];
-  objects: Record<ObjectKind, readonly SpriteGraphic[]>;
+  objects: Record<ObjectKind, readonly ObjectGraphic[]>;
   terrain: TerrainGraphics;
 }
 
@@ -46,14 +56,15 @@ export interface WorldGraphicsOptions {
 
 export function createWorldGraphics(options: WorldGraphicsOptions): WorldGraphics {
   const { artSet, variantsPerKind, rng, toTexture = pixelBufferToTexture } = options;
-  const graphicOf = (art: SpriteArt): SpriteGraphic => ({
-    texture: toTexture(art.paint(art.frame, rng)),
-    pivot: groundCenter(art.frame),
-  });
-  const variantsOf = (art: SpriteArt) => Array.from({ length: variantsPerKind }, () => graphicOf(art));
+  const graphicOf = (art: SpriteArt): ObjectGraphic => {
+    const buffer = art.paint(art.frame, rng);
+    return { texture: toTexture(buffer), pivot: groundCenter(art.frame), opaqueAt: (x, y) => isOpaqueAt(buffer, x, y) };
+  };
+  const variantsOf = (art: SpriteArt, count = variantsPerKind) => Array.from({ length: count }, () => graphicOf(art));
   return {
     grass: variantsOf(artSet.grass),
-    objects: { rock: variantsOf(artSet.objects.rock) },
+    // a dome looks the same everywhere: one variant
+    objects: { rock: variantsOf(artSet.objects.rock), dome: variantsOf(artSet.objects.dome, 1) },
     terrain: terrainGraphics(artSet.terrain, toTexture),
   };
 }
@@ -82,7 +93,18 @@ function terrainGraphics(art: TerrainArt, toTexture: TextureFactory): TerrainGra
     mountain: (look) =>
       once(`mountain ${placeKey(look.place)} ${edgesKey(look.outline)} ${shapeKey(look.shape)} ${look.iced ? 'iced' : 'rock'}`, art.blockFrame(look.shape), () => art.mountain(look)),
     glacier: (look) => once(`glacier ${placeKey(look.place)} ${edgesKey(look.edges)} ${shapeKey(look.shape)}`, art.blockFrame(look.shape), () => art.glacier(look)),
+    floor: (look) => once(floorKey(look), art.tileFrame, () => art.floor(look)),
+    wallTop: () => once('wall top', art.tileFrame, () => art.wallTop()),
+    glass: (side, look) => once(glassKey(side, look), art.tileFrame, () => art.glass(side, look)),
   };
+}
+
+/** A pixel inside the buffer that isn't transparent. */
+function isOpaqueAt(buffer: PixelBuffer, x: number, y: number): boolean {
+  const px = Math.floor(x);
+  const py = Math.floor(y);
+  if (px < 0 || py < 0 || px >= buffer.width || py >= buffer.height) return false;
+  return buffer.data[(py * buffer.width + px) * 4 + 3] === 255;
 }
 
 function placeKey(place: { col: number; row: number }): string {

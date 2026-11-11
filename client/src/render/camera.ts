@@ -21,13 +21,18 @@ export function followPosition(target: ScreenPoint, viewport: Viewport, zoom: nu
   };
 }
 
+/** Finds the map cell of an object drawn at a world point, by its pixels; null when there's none. */
+export type ObjectAt = (point: ScreenPoint) => TilePoint | null;
+
 /**
- * The map cell under a point of the canvas: the topmost drawn cell there, by its top or its cliff face (ADR 0007), kept
- * within the map (it wraps on a wrapping map). Null outside a bounded map.
+ * The map cell under a point of the canvas: a dome drawn there, by its pixels (ADR 0012), else the topmost drawn cell,
+ * by its top or its cliff face (ADR 0007), kept within the map on a wrapping map. Past a bounded map's edges, the cell
+ * there: a click on it leaves a city (ADR 0012).
  */
-export function cellAt(point: ScreenPoint, world: WorldPlacement, heights: Heights, heightOf: HeightOf, grid: Grid): TilePoint | null {
-  const drawn = pickOnHeights(heights, { x: (point.x - world.origin.x) / world.zoom, y: (point.y - world.origin.y) / world.zoom }, heightOf);
-  return normalize(grid, drawn);
+export function cellAt(point: ScreenPoint, world: WorldPlacement, heights: Heights, heightOf: HeightOf, grid: Grid, objectAt: ObjectAt = () => null): TilePoint {
+  const at = { x: (point.x - world.origin.x) / world.zoom, y: (point.y - world.origin.y) / world.zoom };
+  const drawn = objectAt(at) ?? pickOnHeights(heights, at, heightOf);
+  return normalize(grid, drawn) ?? drawn;
 }
 
 /** Where a tile's ground diamond is on the canvas, at its height: its left and right corners, and its middle height. */

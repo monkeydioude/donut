@@ -1,5 +1,5 @@
-// Package app holds the worldmap use-cases: list and describe maps, create the starter world from its file, reset a
-// map from its file, give a room its world.
+// Package app holds the worldmap use-cases: list and describe maps, save the map files missing from the database,
+// reset maps from their files, give a room its world.
 package app
 
 import (
@@ -16,7 +16,6 @@ import (
 // Store is where maps are saved.
 type Store interface {
 	ListMaps(ctx context.Context) ([]domain.Summary, error)
-	CountMaps(ctx context.Context) (int, error)
 	DescriptionBySlug(ctx context.Context, slug string) (domain.Description, error)
 	MapBySlug(ctx context.Context, slug string) (domain.Map, error)
 	InsertMap(ctx context.Context, m domain.Map) (string, error)
@@ -25,9 +24,6 @@ type Store interface {
 
 // ReadMapFile reads and checks the map file of a slug (ADR 0007): the server reads the ones built into it.
 type ReadMapFile func(slug string) (domain.Map, error)
-
-// StarterSlug is the map a server loads from its file when the database has no map.
-const StarterSlug = "world"
 
 type Service struct {
 	store  Store
@@ -76,31 +72,62 @@ func (s *Service) World(ctx context.Context, slug string) (domain.World, error) 
 	return world, nil
 }
 
-// EnsureStarterMap loads the starter world from its file and saves it when there is no map at all. It tells if it
-// created it. Two servers booting together may both try: the second one finds the slug taken and creates nothing.
-func (s *Service) EnsureStarterMap(ctx context.Context, read ReadMapFile) (bool, error) {
-	count, err := s.store.CountMaps(ctx)
+// EnsureMaps saves each map file of `slugs` the database doesn't have yet (ADR 0012), and gives the slugs it saved.
+// Two servers booting together may both try: the second one finds the slug taken and saves nothing.
+func (s *Service) EnsureMaps(ctx context.Context, slugs []string, read ReadMapFile) ([]string, error) {
+	saved, err := s.store.ListMaps(ctx)
 	if err != nil {
-		return false, fmt.Errorf("EnsureStarterMap: %w", err)
+		return nil, fmt.Errorf("EnsureMaps: %w", err)
 	}
-	if count > 0 {
-		s.log.DebugContext(ctx, "starter map not needed", "maps", count)
-		return false, nil
+	have := map[string]bool{}
+	for _, m := range saved {
+		have[m.Slug] = true
 	}
+	created := []string{}
+	for _, slug := range slugs {
+		if have[slug] {
+			continue
+		}
+		ok, err := s.saveMapFile(ctx, slug, read)
+		if err != nil {
+			return created, fmt.Errorf("EnsureMaps: %w", err)
+		}
+		if ok {
+			created = append(created, slug)
+		}
+	}
+	s.log.DebugContext(ctx, "maps ensured", "files", slugs, "already_saved", len(saved), "created", created)
+	return created, nil
+}
+
+// saveMapFile reads a map file and saves it as a new map. False when another server saved it meanwhile.
+func (s *Service) saveMapFile(ctx context.Context, slug string, read ReadMapFile) (bool, error) {
 	start := time.Now()
-	m, err := s.readMapFile(ctx, StarterSlug, read)
+	m, err := s.readMapFile(ctx, slug, read)
 	if err != nil {
-		return false, fmt.Errorf("EnsureStarterMap: %w", err)
+		return false, err
 	}
 	if _, err := s.store.InsertMap(ctx, m); err != nil {
 		if errors.Is(err, errd.ErrConflict) {
-			s.log.InfoContext(ctx, "starter map created by another server meanwhile", "slug", m.Slug)
+			s.log.InfoContext(ctx, "map created by another server meanwhile", "slug", m.Slug)
 			return false, nil
 		}
-		return false, fmt.Errorf("EnsureStarterMap: %w", err)
+		return false, err
 	}
-	s.log.InfoContext(ctx, "starter world created from its file", "slug", m.Slug, "chunks", len(m.Chunks), "rocks", len(m.Objects), "took", time.Since(start))
+	s.log.InfoContext(ctx, "map created from its file", "slug", m.Slug, "chunks", len(m.Chunks), "objects", len(m.Objects), "took", time.Since(start))
 	return true, nil
+}
+
+// ResetMaps replaces each map of `slugs` with its file, one after the other, each in its own transaction. It stops at
+// the first that fails: the maps before it are replaced, the ones after it untouched.
+func (s *Service) ResetMaps(ctx context.Context, slugs []string, read ReadMapFile) error {
+	for i, slug := range slugs {
+		if err := s.ResetMap(ctx, slug, read); err != nil {
+			s.log.WarnContext(ctx, "maps reset stopped", "failed", slug, "replaced", slugs[:i], "untouched", slugs[i+1:])
+			return fmt.Errorf("ResetMaps: %w", err)
+		}
+	}
+	return nil
 }
 
 // ResetMap replaces a map in the database with its file, in one transaction: its chunks, regions and rocks, the rocks

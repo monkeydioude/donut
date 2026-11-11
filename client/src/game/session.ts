@@ -1,53 +1,51 @@
 import type { TilePoint } from '../iso/projection';
 import { emptyChunks, isHeld, regionAt, withChunk, withoutChunk, type HeldChunks, type HeldChunksRef } from '../map/chunks';
-import { regionName, type MapDescription } from '../map/worldMap';
-import type { GameSocket, GameSocketHandlers } from '../net/gameSocket';
-import type { ServerMessage } from '../net/protocol';
+import { gridOf, regionName, type MapDescription } from '../map/worldMap';
+import type { GameSocket } from '../net/gameSocket';
+import type { CellAction, ServerMessage } from '../net/protocol';
 import type { ChunksView } from '../render/chunkView';
 import type { OverlayView } from '../render/overlay';
 import type { PlayersView } from '../render/playersView';
 import type { RegionBanner } from '../ui/banner';
 import type { PointerHandlers, PointerListener } from '../ui/pointer';
 import { silent, type Log } from '../debug/log';
+import { actionAt } from './actions';
 import { enterRegion, initialBanner } from './banner';
-import { applyCommand, canMove, initialCommand, shownPath, type CommandEvent, type CommandState } from './command';
-import { parseLine } from './commands';
+import { applyCommand, canAct, initialCommand, shownPath, type CommandEvent, type CommandState } from './command';
 import { initialGameLog, logMessage, logMove, type LogLine } from './gameLog';
 import { applyMessage, emptyPlayers, ownPlayer, type PlayersState } from './players';
 
-/** The chatbox, as the session drives it (ADR 0010). */
+/** The chatbox, as the session writes in it (ADR 0010): the game's, which stays across maps. */
 export interface SessionChatbox {
   addLine(line: LogLine): void;
-  focus(): void;
 }
 
-/** The action menu, as the session drives it. */
+/** The action menu, as the session drives it: Move, Enter or Exit, then Cancel (ADR 0012). */
 export interface CommandMenu {
-  show(cell: TilePoint, moveEnabled: boolean): void;
+  show(cell: TilePoint, action: CellAction, enabled: boolean): void;
   hide(): void;
 }
 
 export interface MenuChoices {
-  onMove(): void;
+  /** The menu's action was chosen. */
+  onAct(): void;
   onCancel(): void;
 }
 
 export interface PlayersSessionDeps {
   map: MapDescription;
-  socketUrl: string;
-  openSocket: (url: string, handlers: GameSocketHandlers) => GameSocket;
+  /** The game's socket: it stays open across maps, and the game hands this session the messages of its map. */
+  socket: GameSocket;
   /** Calls the handlers on hovers, clicks and cancels. */
   listenToPointer: (handlers: PointerHandlers) => PointerListener;
   createMenu: (choices: MenuChoices) => CommandMenu;
-  /** The chatbox, told what to do with a typed line. */
-  createChatbox: (onLine: (text: string) => void) => SessionChatbox;
+  chatbox: SessionChatbox;
   players: PlayersView;
   chunks: ChunksView;
   overlay: OverlayView;
   banner: RegionBanner;
   /** Where the session keeps the chunks held, for the views drawing on heights to read. */
   held?: HeldChunksRef;
-  onDisconnect: () => void;
   now?: () => number;
   log?: Log;
 }
@@ -61,46 +59,36 @@ export interface Whereabouts {
 }
 
 export interface PlayersSession {
+  /** A message of the server about this map. */
+  receive(message: ServerMessage): void;
   /** Redraws the borders, path and menu: after the view moved, for instance. */
   refresh(): void;
   /** Keeps the hover under the pointer and the menu beside its tile while the camera moves: every frame. */
   followCamera(): void;
   /** Cancels the selection, as the right click does. */
   cancel(): void;
-  /** Gives the chatbox the focus (ADR 0010). */
-  openChat(): void;
   whereabouts(): Whereabouts;
   /** The cell under the pointer, within the map; null off the chunks you hold. */
   hovered(): TilePoint | null;
-  leave(): void;
+  /** Stops listening to the pointer and hides the menu: the game moved to another map (ADR 0012). */
+  stop(): void;
 }
 
 /**
- * Plays on a map: point at a tile, click it, choose Move, and the server walks your player there.
+ * Plays on a map: point at a tile, click it, choose Move (or Enter, or Exit), and the server walks your player there.
  * Everything shown comes from the server: the chunks around you, players, paths and walks.
  */
 export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
   const log = deps.log ?? silent;
   const now = deps.now ?? (() => performance.now());
+  const { socket, chatbox } = deps;
+  const grid = gridOf(deps.map);
   let players = emptyPlayers();
   let command = initialCommand();
   const heldRef: HeldChunksRef = deps.held ?? { current: emptyChunks() };
   let banner = initialBanner();
   let gameLog = initialGameLog();
 
-  // a typed line: answered here, or sent as a teleport, echoed either way (ADR 0010)
-  const chatbox = deps.createChatbox((text) => {
-    chatbox.addLine({ kind: 'you', text });
-    const parsed = parseLine(text);
-    if (!parsed) return;
-    if ('answer' in parsed) {
-      log('command refused here', { text, answer: parsed.answer });
-      chatbox.addLine({ kind: 'error', text: parsed.answer });
-      return;
-    }
-    log('teleport sent', parsed.command);
-    socket.teleport(parsed.command.map, parsed.command.to);
-  });
   // the log of what a message tells, named from the players as they were before it: `left` only tells an id
   const logLines = (message: ServerMessage, before: PlayersState) => {
     const nameOf = (id: string) => before.players.get(id)?.name ?? null;
@@ -136,7 +124,7 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
     deps.overlay.showHover(command.hover);
     deps.overlay.showSelection(command.selection?.cell ?? null);
     deps.overlay.showPath(shownPath(command));
-    if (command.selection) menu.show(command.selection.cell, canMove(command));
+    if (command.selection) menu.show(command.selection.cell, command.selection.action, canAct(command));
     else menu.hide();
   };
   const dispatch = (event: CommandEvent) => {
@@ -145,56 +133,61 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
     render();
   };
 
-  const socket = deps.openSocket(deps.socketUrl, {
-    onMessage: (message) => {
-      applyChunks(message);
-      const before = players;
-      logLines(message, before);
-      players = applyMessage(players, message);
-      if (players !== before) {
-        log(`players after ${message.type}`, { you: players.you, count: players.players.size, players: [...players.players.values()] });
-        deps.players.sync(players, message.type === 'moved' ? 'glide' : 'place');
-        followYou(before, players);
-      }
-      updateBanner();
-      command = applyCommand(command, { type: 'server', message, you: players.you });
-      if (message.type !== 'moved' || message.id === players.you) log(`command after ${message.type}`, summary(command));
-      // your step makes the selected tile's planned path start from the wrong cell: ask again
-      if (message.type === 'moved' && message.id === players.you && command.selection) {
-        log('you stepped while a tile is selected: asking its path again', command.selection.cell);
-        socket.plan(command.selection.cell);
-      }
-      render();
-    },
-    onClose: () => {
-      log('disconnected');
-      deps.onDisconnect();
-    },
-  });
+  const receive = (message: ServerMessage) => {
+    applyChunks(message);
+    const before = players;
+    logLines(message, before);
+    players = applyMessage(players, message);
+    if (players !== before) {
+      log(`players after ${message.type}`, { you: players.you, count: players.players.size, players: [...players.players.values()] });
+      deps.players.sync(players, message.type === 'moved' ? 'glide' : 'place');
+      followYou(before, players);
+    }
+    updateBanner();
+    command = applyCommand(command, { type: 'server', message, you: players.you });
+    if (message.type !== 'moved' || message.id === players.you) log(`command after ${message.type}`, summary(command));
+    // your step makes the selected tile's planned path start from the wrong cell: ask again
+    if (message.type === 'moved' && message.id === players.you && command.selection) {
+      log('you stepped while a tile is selected: asking its path again', command.selection.cell);
+      socket.plan(command.selection.cell);
+    }
+    render();
+  };
   const menu = deps.createMenu({
-    onMove: () => {
-      if (!command.selection) return;
-      log('menu: Move', { to: command.selection.cell, path: command.selection.path });
-      socket.walk(command.selection.cell);
-      chatbox.addLine(logMove(command.selection.cell));
-      dispatch({ type: 'move' });
+    onAct: () => {
+      const selection = command.selection;
+      if (!selection) return;
+      log(`menu: ${selection.action}`, { to: selection.cell, path: selection.path });
+      act(selection.action, selection.cell);
+      dispatch({ type: 'act' });
     },
     onCancel: () => {
       log('menu: Cancel');
       dispatch({ type: 'cancel' });
     },
   });
-  // only the cells of chunks you hold can be pointed at: the others aren't drawn
+  // a Move walks there; Enter and Exit walk to the door, then through (ADR 0012)
+  const act = (action: CellAction, cell: TilePoint) => {
+    if (action === 'enter') socket.enter(cell);
+    else if (action === 'exit') socket.exit(cell);
+    else {
+      socket.walk(cell);
+      chatbox.addLine(logMove(cell));
+    }
+  };
+  // only the cells of chunks you hold can be pointed at: the others aren't drawn. Leaving a city is the exception: a
+  // click past its edge is on no chunk.
   const pointer = deps.listenToPointer({
     hover: (cell) => dispatch({ type: 'hover', cell: cell && isHeld(heldRef.current, cell) ? cell : null }),
     select: (cell) => {
-      if (!isHeld(heldRef.current, cell)) {
+      const action = actionAt(cell, heldRef.current, grid);
+      if (action !== 'exit' && !isHeld(heldRef.current, cell)) {
         log('click on a chunk not held: cancel', cell);
         dispatch({ type: 'cancel' });
         return;
       }
-      dispatch({ type: 'select', cell });
-      log('asking the path to', cell);
+      dispatch({ type: 'select', cell, action });
+      log('asking the path to', { cell, action });
       socket.plan(cell);
     },
     cancel: () => dispatch({ type: 'cancel' }),
@@ -208,19 +201,19 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
   }
 
   return {
+    receive,
     refresh: render,
     followCamera: () => {
       pointer.repick();
-      if (command.selection) menu.show(command.selection.cell, canMove(command));
+      if (command.selection) menu.show(command.selection.cell, command.selection.action, canAct(command));
     },
     cancel: () => dispatch({ type: 'cancel' }),
-    openChat: () => chatbox.focus(),
     whereabouts: () => whereaboutsOf(players, heldRef.current),
     hovered: () => command.hover,
-    leave: () => {
-      log('leaving');
+    stop: () => {
+      log('stopped: the game left this map');
       pointer.stop();
-      socket.close();
+      menu.hide();
     },
   };
 }
@@ -238,7 +231,8 @@ function summary(command: CommandState) {
     hover: command.hover,
     selected: command.selection?.cell ?? null,
     planned: command.selection?.path === null ? 'waiting' : (command.selection?.path?.length ?? null),
-    moveEnabled: canMove(command),
+    action: command.selection?.action ?? null,
+    enabled: canAct(command),
     walkingSteps: command.walking.length,
   };
 }

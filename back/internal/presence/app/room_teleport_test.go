@@ -44,7 +44,7 @@ func TestTeleportFar(t *testing.T) {
 	annClient.take()
 	bobClient.take()
 
-	w.room.Teleport(ann, annClient, "world", cell(600, 300)) // chunk (18, 9)
+	w.room.Teleport(ann, annClient, cell(600, 300)) // chunk (18, 9)
 
 	events := annClient.take()
 	require.NotEmpty(t, events)
@@ -65,7 +65,7 @@ func TestTeleportOntoAnUnwalkableCell(t *testing.T) {
 	annClient.take()
 	w.world.rocks[cell(600, 300)] = true
 
-	w.room.Teleport(ann, annClient, "world", cell(600, 300))
+	w.room.Teleport(ann, annClient, cell(600, 300))
 	events := annClient.take()
 	require.NotEmpty(t, events)
 	assert.Equal(t, teleported(cell(600, 300), false), events[0], "landed there anyway")
@@ -80,7 +80,7 @@ func TestTeleportWithinTheChunkSendsNoChunk(t *testing.T) {
 	annClient := w.joinAt(t, ann, cell(40, 40))
 	annClient.take()
 
-	w.room.Teleport(ann, annClient, "world", cell(41, 41))
+	w.room.Teleport(ann, annClient, cell(41, 41))
 	assert.Equal(t, []domain.Event{teleported(cell(41, 41), true)}, annClient.take())
 }
 
@@ -95,10 +95,10 @@ func TestTeleportAsTheOthersSeeIt(t *testing.T) {
 		client.take()
 	}
 
-	w.room.Teleport(ann, annClient, "world", cell(45, 45))
+	w.room.Teleport(ann, annClient, cell(45, 45))
 	assert.Equal(t, []domain.Event{moved(ann, cell(45, 45))}, bobClient.take(), "saw both cells: moved")
 
-	w.room.Teleport(ann, annClient, "world", cell(600, 300))
+	w.room.Teleport(ann, annClient, cell(600, 300))
 	assert.Equal(t, []domain.Event{domain.Left{ID: ann}}, bobClient.take(), "saw the old cell only: left")
 	assert.Equal(t, []domain.Event{domain.Joined{Player: player(ann, cell(600, 300))}}, carlClient.take(), "sees the new cell only: joined")
 	assert.Empty(t, daveClient.take(), "sees neither: nothing")
@@ -106,13 +106,13 @@ func TestTeleportAsTheOthersSeeIt(t *testing.T) {
 
 // ADR 0010 test 6
 func TestTeleportRefused(t *testing.T) {
+	// an unknown map is refused by the hub (ADR 0012)
 	cases := map[string]struct {
-		toMap  string
 		to     core.Cell
 		reason string
 	}{
-		"an unknown map":         {"mars", cell(1, 1), "unknown map: mars"},
-		"a cell outside the map": {"world", cell(5000, 2), "(5000, 2) is outside the map"},
+		"a cell outside the map": {cell(5000, 2), "(5000, 2) is outside the map"},
+		"a negative cell":        {cell(-1, 2), "(-1, 2) is outside the map"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -122,35 +122,25 @@ func TestTeleportRefused(t *testing.T) {
 			annClient.take()
 			bobClient.take()
 
-			w.room.Teleport(ann, annClient, c.toMap, c.to)
+			w.room.Teleport(ann, annClient, c.to)
 			assert.Equal(t, []domain.Event{domain.Refused{Request: "teleport", Reason: c.reason}}, annClient.take())
 			assert.Empty(t, bobClient.take(), "nobody moved")
 
-			w.room.Teleport(ann, annClient, "world", cell(41, 41))
+			w.room.Teleport(ann, annClient, cell(41, 41))
 			assert.Equal(t, []domain.Event{moved(ann, cell(41, 41))}, bobClient.take(), "ann is still on her cell: bob sees the next teleport")
 		})
 	}
 }
 
-// ADR 0010 test 7
-func TestTeleportCountsInTheLimiter(t *testing.T) {
-	t.Run("the 11th request within a second is ignored", func(t *testing.T) {
-		w := newDonut()
-		annClient := w.joinAt(t, ann, cell(40, 40))
-		annClient.take()
-		for i := range domain.MaxRequestsPerSecond + 1 {
-			w.room.Teleport(ann, annClient, "world", cell(41+i%2, 41))
-		}
-		assert.Len(t, annClient.take(), domain.MaxRequestsPerSecond)
-	})
-
+// ADR 0010 test 7: the limiter is the session's now (ADR 0012), tested with the hub
+func TestATeleportOnAReplacedConnectionIsIgnored(t *testing.T) {
 	t.Run("a replaced connection's teleport is ignored", func(t *testing.T) {
 		w := newDonut()
 		oldClient := w.joinAt(t, ann, cell(40, 40))
 		newClient := w.joinAt(t, ann, cell(40, 40))
 		oldClient.take()
 		newClient.take()
-		w.room.Teleport(ann, oldClient, "world", cell(41, 41))
+		w.room.Teleport(ann, oldClient, cell(41, 41))
 		assert.Empty(t, oldClient.take())
 		assert.Empty(t, newClient.take())
 	})

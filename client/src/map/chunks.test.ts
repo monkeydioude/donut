@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyChunks, groundAt, heightAt, heightForDrawing, isHeld, regionAt, terrainAt, withChunk, withoutChunk, type Chunk } from './chunks';
+import { domeAt, emptyChunks, groundAt, heightAt, heightForDrawing, isHeld, regionAt, terrainAt, withChunk, withoutChunk, type Chunk } from './chunks';
 
 function chunk(cx: number, cy: number, region = 1): Chunk {
   const ground = Array<'grass' | 'water' | 'void'>(1024).fill('grass');
@@ -50,5 +50,17 @@ describe('held chunks', () => {
     expect(heightOf({ col: 2, row: 0 })).toBe(3);
     expect(heightOf({ col: 162, row: 160 }), 'a copy past both seams').toBe(3);
     expect(heightOf({ col: 40, row: 0 }), 'a chunk not held').toBe(0);
+  });
+});
+
+// ADR 0012 test 25
+describe('domeAt', () => {
+  it("is the dome covering a cell of a held chunk, null elsewhere", () => {
+    const dome = { id: 'd', kind: 'dome' as const, col: 70, row: 40, leadsTo: 'doma-1' };
+    const held = withChunk(emptyChunks(), { ...chunk(2, 1), objects: [{ id: 'r', kind: 'rock', col: 66, row: 33 }, dome] });
+    expect(domeAt(held, { col: 71, row: 41 })).toEqual(dome);
+    expect(domeAt(held, { col: 72, row: 41 })).toBeNull();
+    expect(domeAt(held, { col: 66, row: 33 }), 'a rock').toBeNull();
+    expect(domeAt(emptyChunks(), { col: 70, row: 40 }), 'not held').toBeNull();
   });
 });

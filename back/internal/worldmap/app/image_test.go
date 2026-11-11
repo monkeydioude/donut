@@ -32,7 +32,6 @@ func (s *oneMapStore) MapBySlug(_ context.Context, slug string) (domain.Map, err
 }
 
 func (s *oneMapStore) ListMaps(context.Context) ([]domain.Summary, error) { return nil, nil }
-func (s *oneMapStore) CountMaps(context.Context) (int, error)             { return 1, nil }
 func (s *oneMapStore) DescriptionBySlug(context.Context, string) (domain.Description, error) {
 	return s.m.Description, nil
 }

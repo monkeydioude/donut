@@ -212,7 +212,7 @@ func TestNoPathOutsideTheHeldChunks(t *testing.T) {
 	annClient.take()
 
 	w.room.Plan(ann, annClient, cell(200, 40))
-	assert.Equal(t, []domain.Event{domain.Planned{To: cell(200, 40)}}, annClient.take(), "ann doesn't hold that chunk")
+	assert.Equal(t, []domain.Event{domain.Planned{To: cell(200, 40), Action: domain.ActionMove}}, annClient.take(), "ann doesn't hold that chunk")
 
 	w.room.Walk(ann, annClient, cell(200, 40))
 	assert.Equal(t, []domain.Event{domain.Walking{}}, annClient.take())
@@ -220,7 +220,7 @@ func TestNoPathOutsideTheHeldChunks(t *testing.T) {
 	assert.Empty(t, annClient.take(), "the walk stopped")
 
 	w.room.Plan(ann, annClient, cell(-1, 40))
-	assert.Equal(t, []domain.Event{domain.Planned{To: cell(-1, 40)}}, annClient.take(), "cells are told within the map")
+	assert.Equal(t, []domain.Event{domain.Planned{To: cell(-1, 40), Action: domain.ActionMove}}, annClient.take(), "cells are told within the map")
 }
 
 // ADR 0003 test 20

@@ -1,72 +1,73 @@
 import { describe, expect, it } from 'vitest';
 import type { TilePoint } from '../iso/projection';
 import type { Chunk, HeldChunksRef } from '../map/chunks';
-import type { GameSocketHandlers } from '../net/gameSocket';
-import type { Cell } from '../net/protocol';
+import type { GroundKind, MapDescription, MapObject } from '../map/worldMap';
+import type { Cell, CellAction, ServerMessage } from '../net/protocol';
 import type { PointerHandlers } from '../ui/pointer';
 import { emptyChunks } from '../map/chunks';
+import { cityDescription, worldDescription } from '../testing/maps';
 import { emptyPlayers } from './players';
 import type { MenuChoices } from './session';
 import { startPlayersSession, whereaboutsOf } from './session';
 
-/** Chunk (0, 0) of the map, all grass, in region 1. */
-function chunk(region = 1): Chunk {
-  return { key: { cx: 0, cy: 0 }, version: 1, ground: Array(1024).fill('grass'), height: Array(1024).fill(0), region: Array(1024).fill(region), objects: [] };
+/** Chunk (0, 0) of the map, all grass but the cells given, in region 1, with these objects. */
+function chunk(region = 1, cells: Record<number, GroundKind> = {}, objects: MapObject[] = []): Chunk {
+  const ground = Array<GroundKind>(1024).fill('grass');
+  for (const [i, kind] of Object.entries(cells)) ground[Number(i)] = kind;
+  return { key: { cx: 0, cy: 0 }, version: 1, ground, height: Array(1024).fill(0), region: Array(1024).fill(region), objects };
 }
 
-function setup(held?: HeldChunksRef) {
-  const sent: ({ type: 'plan' | 'walk'; to: Cell } | { type: 'teleport'; map: string; to: Cell })[] = [];
-  const menu: { shown: { cell: TilePoint; moveEnabled: boolean } | null } = { shown: null };
+const welcome = (map: MapDescription): ServerMessage => ({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 2, row: 2 }], stepMs: 200, map });
+
+function setup(held?: HeldChunksRef, map: MapDescription = worldDescription(), first: Chunk = chunk()) {
+  const sent: ({ type: 'plan' | 'walk' | 'enter' | 'exit'; to: Cell } | { type: 'teleport'; map: string; to: Cell })[] = [];
+  const menu: { shown: { cell: TilePoint; action: CellAction; enabled: boolean } | null } = { shown: null };
   const drawn: { path: readonly TilePoint[]; hover: TilePoint | null; chunks: string[]; banners: string[] } = {
     path: [],
     hover: null,
     chunks: [],
     banners: [],
   };
-  const chat: { lines: string[]; focused: number; type: (text: string) => void } = { lines: [], focused: 0, type: () => {} };
-  let socket: GameSocketHandlers | undefined;
+  const chat: { lines: string[] } = { lines: [] };
   let pointer: PointerHandlers | undefined;
+  let pointerStopped = false;
   let choices: MenuChoices | undefined;
-  let disconnected = false;
   const playing = startPlayersSession({
-    map: { slug: 'world', name: 'World', width: 160, height: 160, wraps: true, chunkSize: 32, regions: [{ id: 1, name: 'Sprinkle Meadow', biome: 'meadow' }] },
-    socketUrl: 'ws://test',
-    openSocket: (_url, handlers) => {
-      socket = handlers;
-      return {
-        plan: (to) => sent.push({ type: 'plan', to }),
-        walk: (to) => sent.push({ type: 'walk', to }),
-        teleport: (map, to) => sent.push({ type: 'teleport', map, to }),
-        close: () => {},
-      };
+    map,
+    socket: {
+      plan: (to) => sent.push({ type: 'plan', to }),
+      walk: (to) => sent.push({ type: 'walk', to }),
+      teleport: (map, to) => sent.push({ type: 'teleport', map, to }),
+      enter: (to) => sent.push({ type: 'enter', to }),
+      exit: (to) => sent.push({ type: 'exit', to }),
+      close: () => {},
     },
     listenToPointer: (handlers) => {
       pointer = handlers;
-      return { repick: () => {}, stop: () => {} };
+      return { repick: () => {}, stop: () => (pointerStopped = true) };
     },
     createMenu: (c) => {
       choices = c;
-      return { show: (cell, moveEnabled) => (menu.shown = { cell, moveEnabled }), hide: () => (menu.shown = null) };
+      return { show: (cell, action, enabled) => (menu.shown = { cell, action, enabled }), hide: () => (menu.shown = null) };
     },
-    createChatbox: (onLine) => {
-      chat.type = onLine;
-      return { addLine: (line) => chat.lines.push(`${line.kind}: ${line.text}`), focus: () => chat.focused++ };
-    },
+    chatbox: { addLine: (line) => chat.lines.push(`${line.kind}: ${line.text}`) },
     players: { sync: () => {}, ownPosition: () => null, ownCell: () => ({ col: 2, row: 2 }), relift: () => drawn.chunks.push('relift') },
     chunks: {
       show: (c) => drawn.chunks.push(`show ${c.key.cx},${c.key.cy}`),
       forget: (key) => drawn.chunks.push(`forget ${key.cx},${key.cy}`),
       follow: () => drawn.chunks.push('follow'),
+      objectAt: () => null,
+      clear: () => drawn.chunks.push('clear'),
     },
     overlay: { showHover: (cell) => (drawn.hover = cell), showSelection: () => {}, showPath: (path) => (drawn.path = path) },
     banner: { show: (name) => drawn.banners.push(name) },
     ...(held ? { held } : {}),
-    onDisconnect: () => (disconnected = true),
     now: () => 0,
   });
-  socket!.onMessage({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 2, row: 2 }], stepMs: 200 });
-  socket!.onMessage({ type: 'chunk', chunk: chunk() });
-  return { playing, sent, menu, drawn, chat, socket: socket!, pointer: pointer!, choices: choices!, isDisconnected: () => disconnected, hovered: () => playing.hovered() };
+  playing.receive(welcome(map));
+  playing.receive({ type: 'chunk', chunk: first });
+  const socket = { onMessage: playing.receive };
+  return { playing, sent, menu, drawn, chat, socket, pointer: pointer!, choices: choices!, hovered: () => playing.hovered(), pointerStopped: () => pointerStopped };
 }
 
 const tile = { col: 4, row: 2 };
@@ -77,18 +78,18 @@ describe('startPlayersSession', () => {
     const session = setup();
     session.pointer.select(tile);
     expect(session.sent).toEqual([{ type: 'plan', to: tile }]);
-    expect(session.menu.shown).toEqual({ cell: tile, moveEnabled: false });
+    expect(session.menu.shown).toEqual({ cell: tile, action: 'move', enabled: false });
 
-    session.socket.onMessage({ type: 'planned', ...tile, path });
-    expect(session.menu.shown).toEqual({ cell: tile, moveEnabled: true });
+    session.socket.onMessage({ type: 'planned', ...tile, path, action: 'move' });
+    expect(session.menu.shown).toEqual({ cell: tile, action: 'move', enabled: true });
     expect(session.drawn.path).toEqual(path);
   });
 
   it('Move asks the walk and closes the menu', () => {
     const session = setup();
     session.pointer.select(tile);
-    session.socket.onMessage({ type: 'planned', ...tile, path });
-    session.choices.onMove();
+    session.socket.onMessage({ type: 'planned', ...tile, path, action: 'move' });
+    session.choices.onAct();
     expect(session.sent.at(-1)).toEqual({ type: 'walk', to: tile });
     expect(session.menu.shown).toBeNull();
   });
@@ -148,10 +149,42 @@ describe('startPlayersSession', () => {
     expect(session.drawn.banners, 'not again in the same region').toEqual(['Sprinkle Meadow']);
   });
 
-  it('tells when the connection ends', () => {
+  // ADR 0012
+  it('stops listening to the pointer and hides the menu when the game leaves the map', () => {
     const session = setup();
-    session.socket.onClose();
-    expect(session.isDisconnected()).toBe(true);
+    session.pointer.select(tile);
+    session.playing.stop();
+    expect(session.menu.shown).toBeNull();
+    expect(session.pointerStopped()).toBe(true);
+  });
+});
+
+// ADR 0012 tests 25 and 26, through the session
+describe('Enter and Exit', () => {
+  const dome: MapObject = { id: 'd1', kind: 'dome', col: 6, row: 6, leadsTo: 'doma-1' };
+
+  it("a click on a dome's cell asks its plan, and the menu's Enter asks to go in", () => {
+    const session = setup(undefined, worldDescription(), chunk(1, {}, [dome]));
+    session.pointer.select({ col: 7, row: 7 });
+    expect(session.menu.shown).toEqual({ cell: { col: 7, row: 7 }, action: 'enter', enabled: false });
+    session.socket.onMessage({ type: 'planned', col: 7, row: 7, path, action: 'enter' });
+    expect(session.menu.shown?.enabled).toBe(true);
+    session.choices.onAct();
+    expect(session.sent.at(-1)).toEqual({ type: 'enter', to: { col: 7, row: 7 } });
+    expect(session.chat.lines, 'no "You head to" for a door').toEqual([]);
+  });
+
+  it("in a city, a click past the edge or on a wall is Exit, even on no chunk held", () => {
+    const session = setup(undefined, cityDescription(), chunk(1, { 33: 'wall' }));
+    session.pointer.select({ col: -3, row: 5 });
+    expect(session.sent).toEqual([{ type: 'plan', to: { col: -3, row: 5 } }]);
+    expect(session.menu.shown?.action).toBe('exit');
+    session.socket.onMessage({ type: 'planned', col: -3, row: 5, path, action: 'exit' });
+    session.choices.onAct();
+    expect(session.sent.at(-1)).toEqual({ type: 'exit', to: { col: -3, row: 5 } });
+
+    session.pointer.select({ col: 1, row: 1 });
+    expect(session.menu.shown?.action, 'cell 33 is (1, 1), a wall').toBe('exit');
   });
 });
 
@@ -178,27 +211,11 @@ describe('whereabouts', () => {
 
 // ADR 0010 tests 11 to 14, through the session
 describe('the chatbox and the game log', () => {
-  it('a teleport line is echoed and sent; the others are answered here', () => {
-    const session = setup();
-    session.chat.type('/teleport world 1023 511');
-    expect(session.sent).toEqual([{ type: 'teleport', map: 'world', to: { col: 1023, row: 511 } }]);
-    session.chat.type('hello');
-    session.chat.type('/fly');
-    expect(session.sent).toHaveLength(1);
-    expect(session.chat.lines).toEqual([
-      'you: /teleport world 1023 511',
-      'you: hello',
-      'error: Chat comes later: only /teleport <map> <col> <row> works for now',
-      'you: /fly',
-      'error: Unknown command: /fly',
-    ]);
-  });
-
   it('a teleport places you, logs it, and clears the selection and its path', () => {
     const session = setup();
     session.pointer.select(tile);
-    session.socket.onMessage({ type: 'planned', ...tile, path });
-    expect(session.menu.shown?.moveEnabled).toBe(true);
+    session.socket.onMessage({ type: 'planned', ...tile, path, action: 'move' });
+    expect(session.menu.shown?.enabled).toBe(true);
 
     session.socket.onMessage({ type: 'teleported', col: 100, row: 100, walkable: false });
     expect(session.menu.shown).toBeNull();
@@ -212,8 +229,8 @@ describe('the chatbox and the game log', () => {
     session.socket.onMessage({ type: 'joined', player: { id: 'b', name: 'Bob', robot: '', col: 3, row: 3 } });
     session.socket.onMessage({ type: 'left', id: 'b' });
     session.pointer.select(tile);
-    session.socket.onMessage({ type: 'planned', ...tile, path });
-    session.choices.onMove();
+    session.socket.onMessage({ type: 'planned', ...tile, path, action: 'move' });
+    session.choices.onAct();
     session.socket.onMessage({ type: 'stopped', col: 3, row: 2 });
     session.socket.onMessage({ type: 'refused', request: 'teleport', reason: 'unknown map: mars' });
     expect(session.chat.lines).toEqual([
@@ -225,9 +242,4 @@ describe('the chatbox and the game log', () => {
     ]);
   });
 
-  it('opens the chat on demand', () => {
-    const session = setup();
-    session.playing.openChat();
-    expect(session.chat.focused).toBe(1);
-  });
 });

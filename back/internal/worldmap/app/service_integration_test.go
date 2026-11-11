@@ -38,19 +38,19 @@ func smallWorld() domain.Map {
 	return domain.Generate(opts, seeded(5))
 }
 
-// ADR 0003 test 11, ADR 0001 test 7, and ADR 0007 test 20
+// ADR 0003 test 11, ADR 0001 test 7, ADR 0007 test 20, and ADR 0012 test 11
 // DONUT_TEST_DATABASE_URL=postgres://donut:donut@localhost:5434/donut go test ./internal/worldmap/app
-func TestEnsureStarterMapCreatesTheWorldOnce(t *testing.T) {
+func TestEnsureMapsSavesTheWorldOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, ctx)
 
-	created, err := f.maps.EnsureStarterMap(ctx, mapfiles.Read)
+	created, err := f.maps.EnsureMaps(ctx, []string{"world"}, mapfiles.Read)
 	require.NoError(t, err)
-	assert.True(t, created)
+	assert.Equal(t, []string{"world"}, created)
 
-	created, err = f.maps.EnsureStarterMap(ctx, mapfiles.Read)
+	created, err = f.maps.EnsureMaps(ctx, []string{"world"}, mapfiles.Read)
 	require.NoError(t, err)
-	assert.False(t, created, "a second boot creates nothing")
+	assert.Empty(t, created, "a second boot creates nothing")
 
 	list, err := f.maps.ListMaps(ctx)
 	require.NoError(t, err)
@@ -66,6 +66,74 @@ func TestEnsureStarterMapCreatesTheWorldOnce(t *testing.T) {
 	assert.Equal(t, file.Chunks, saved.Chunks, "the file's cells")
 	assert.Len(t, saved.Regions, 18)
 	assert.Len(t, saved.Objects, len(file.Objects))
+}
+
+// ADR 0012 test 11: only the maps the database doesn't have are read and saved.
+func TestEnsureMapsSavesOnlyTheMissingOnes(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	_, err := f.repo.InsertMap(ctx, smallWorld())
+	require.NoError(t, err)
+	var read []string
+	files := func(slug string) (domain.Map, error) {
+		read = append(read, slug)
+		m := smallWorld()
+		m.Slug = slug
+		return m, nil
+	}
+
+	created, err := f.maps.EnsureMaps(ctx, []string{"small", "other"}, files)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"other"}, created)
+	assert.Equal(t, []string{"other"}, read, "a saved map's file isn't read")
+}
+
+// ADR 0012 test 11: reset-maps replaces each map, and stops at the first refused file.
+func TestResetMapsReplacesEachMap(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	ids := map[string]string{}
+	for _, slug := range []string{"one", "two", "three"} {
+		m := smallWorld()
+		m.Slug = slug
+		id, err := f.repo.InsertMap(ctx, m)
+		require.NoError(t, err)
+		ids[slug] = id
+	}
+	refused := errors.New("ground.png (1, 2): #123456 isn't a ground")
+	files := func(slug string) (domain.Map, error) {
+		if slug == "two" {
+			return domain.Map{}, refused
+		}
+		m := smallWorld()
+		m.Slug = slug
+		return m, nil
+	}
+
+	err := f.maps.ResetMaps(ctx, []string{"one", "two", "three"}, files)
+	assert.ErrorIs(t, err, refused)
+	for slug, replaced := range map[string]bool{"one": true, "two": false, "three": false} {
+		m, err := f.repo.MapBySlug(ctx, slug)
+		require.NoError(t, err)
+		assert.Equal(t, replaced, m.ID != ids[slug], "%s replaced: %v", slug, replaced)
+	}
+}
+
+// ADR 0012 test 12: a dome reads back with the map it leads to.
+func TestADomeReadsBackWithWhereItLeads(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	m := smallWorld()
+	m.Objects = []domain.Object{{Kind: domain.ObjectDome, Col: 32, Row: 64, LeadsTo: "doma-1"}}
+	_, err := f.repo.InsertMap(ctx, m)
+	require.NoError(t, err)
+
+	read, err := f.repo.MapBySlug(ctx, "small")
+	require.NoError(t, err)
+	require.Len(t, read.Objects, 1)
+	assert.Equal(t, domain.ObjectDome, read.Objects[0].Kind)
+	assert.Equal(t, core.Cell{Col: 32, Row: 64}, read.Objects[0].Cell())
+	assert.Equal(t, "doma-1", read.Objects[0].LeadsTo)
 }
 
 // ADR 0007 test 21
@@ -145,6 +213,7 @@ func TestAMapReadsBackAsSaved(t *testing.T) {
 		assert.NotEmpty(t, object.ID)
 		assert.Equal(t, saved.Objects[i].Cell(), object.Cell())
 		assert.Equal(t, domain.ObjectRock, object.Kind)
+		assert.Empty(t, object.LeadsTo, "a rock leads nowhere")
 	}
 
 	_, err = f.maps.World(ctx, "nowhere")
@@ -187,4 +256,38 @@ func TestDescriptionHasRegionsButNoCells(t *testing.T) {
 		{ID: 2, Name: "Two", Biome: domain.BiomeMeadow},
 		{ID: 3, Name: "Three", Biome: domain.BiomeMeadow},
 	}, d.Regions)
+}
+
+// ADR 0012 test 12: a city's description tells the dome it's entered from, with that map's size; the world's none.
+func TestACityStandsOnTheDomeLeadingToIt(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	world := smallWorld()
+	world.Objects = []domain.Object{{Kind: domain.ObjectDome, Col: 32, Row: 64, LeadsTo: "doma-1"}}
+	_, err := f.repo.InsertMap(ctx, world)
+	require.NoError(t, err)
+	_, err = f.repo.InsertMap(ctx, domain.GenerateCity(domain.Doma1()))
+	require.NoError(t, err)
+
+	city, err := f.maps.Description(ctx, "doma-1")
+	require.NoError(t, err)
+	assert.Equal(t, &core.Place{Map: "small", Col: 32, Row: 64, Width: 160, Height: 192}, city.StandsOn)
+	small, err := f.maps.Description(ctx, "small")
+	require.NoError(t, err)
+	assert.Nil(t, small.StandsOn)
+}
+
+// ADR 0012 test 11: with only the world saved, the boot saves Doma-1
+func TestEnsureMapsSavesDoma1BesideTheWorld(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	_, err := f.repo.InsertMap(ctx, domain.Map{Description: domain.Description{Summary: domain.Summary{Slug: "world", Name: "World", Width: 160, Height: 160, Wraps: true}}})
+	require.NoError(t, err)
+
+	created, err := f.maps.EnsureMaps(ctx, mapfiles.Slugs(), mapfiles.Read)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"doma-1"}, created)
+	city, err := f.repo.MapBySlug(ctx, "doma-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Doma-1", city.Name)
 }

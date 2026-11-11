@@ -1,14 +1,16 @@
 # Map `world`: World, 2048 x 1024
 
-The starter map (ADR 0007). Every PNG is the map's size, 1 pixel per cell, column 0 on the left and row 0 at
-the top. Each pixel is fully transparent or one of the exact colors below: no antialiasing, no half
-transparency. Paint with a pencil, or in indexed mode with `palette.gpl` (GIMP, Aseprite).
+A map built into the server (ADR 0007, ADR 0012). Every PNG is the map's size, 1 pixel per cell, column 0 on
+the left and row 0 at the top. Each pixel is fully transparent or one of the exact colors below: no antialiasing,
+no half transparency. Paint with a pencil, or in indexed mode with `palette.gpl` (GIMP, Aseprite).
 
-- `make check-world` checks the folder.
-- `make reset-world`, with the server stopped, replaces the world in the database with it.
-- `make world` generates it again from its seed: it refuses to overwrite hand edits without `FORCE=1`.
+- `go run ./cmd/mapfile check mapfiles/<slug>`, from `back/`, checks a folder (`make check-world` the world's).
+- `make reset-maps`, with the server stopped, replaces every map in the database with its folder.
+- `make world` and `make city` generate the world and Doma-1 again: they refuse to overwrite hand edits
+  without `FORCE=1`.
 
-`map.json` holds the name, size, wrapping and regions, each with its color in `regions.png`.
+`map.json` holds the name, size, wrapping and regions, each with its color in `regions.png`, and the domes:
+each one's back cell (its 2 x 2 footprint's lowest column and row) and the map it leads to.
 
 ## `ground.png`
 
@@ -22,6 +24,8 @@ transparency. Paint with a pencil, or in indexed mode with `palette.gpl` (GIMP, 
 | `#4f9fd8` | ocean |
 | `#8a8694` | mountain |
 | `#dff4fb` | glacier |
+| `#d9d2c3` | floor |
+| `#6f6a7a` | wall |
 
 ## `height.png`
 

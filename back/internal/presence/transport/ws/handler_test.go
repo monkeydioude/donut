@@ -38,12 +38,21 @@ const (
 // annPublic is the id the others know ann by.
 var annPublic = domain.PublicID(ann)
 
-// openWorld is a map without rocks; paths go straight along rows. Players spawn on its spawn cells in turn.
+// openWorld is a map without rocks nor doors; paths go straight along rows. Players spawn on its spawn cells in turn.
 type openWorld struct {
+	info   core.MapInfo
 	grid   core.Grid
 	spawns []core.Cell
 	joins  atomic.Int32
+	// domes are sent with the chunk of their cell, after its rock.
+	domes []core.PlacedObject
 }
+
+func (w *openWorld) Info() core.MapInfo                     { return w.info }
+func (w *openWorld) DomeAt(core.Cell) (core.Dome, bool)     { return core.Dome{}, false }
+func (w *openWorld) DomeLeadingTo(string) (core.Dome, bool) { return core.Dome{}, false }
+func (w *openWorld) Edge() []core.Cell                      { return nil }
+func (w *openWorld) IsOutside(core.Cell) bool               { return false }
 
 func (w *openWorld) Grid() core.Grid { return w.grid }
 
@@ -76,32 +85,50 @@ func (w *openWorld) Chunk(key core.ChunkKey) (*core.ChunkContents, bool) {
 	return &core.ChunkContents{
 		Key: key, Version: 1, Kinds: []string{"grass"},
 		Ground: make([]uint8, core.CellsPerChunk), Height: make([]int8, core.CellsPerChunk), Region: make([]uint8, core.CellsPerChunk),
-		Objects: []core.PlacedObject{{ID: "r" + key.String(), Kind: "rock", Cell: key.Origin()}},
+		Objects: append([]core.PlacedObject{{ID: "r" + key.String(), Kind: "rock", Cell: key.Origin()}}, w.domesIn(key)...),
 	}, true
 }
 
-// newServer serves the websocket of two maps. "meadow" is 5 x 5: one chunk, everyone spawns in its center.
-// "world" is 1024 x 512 and wraps: players spawn on (40, 40), then (300, 40), then (70, 40), in turn.
-// Rooms tick for real until the test ends.
-func newServer(t *testing.T) *httptest.Server {
-	return newLoggedServer(t, logs.Discard())
+func (w *openWorld) domesIn(key core.ChunkKey) []core.PlacedObject {
+	var in []core.PlacedObject
+	for _, dome := range w.domes {
+		if core.ChunkOf(dome.Cell) == key {
+			in = append(in, dome)
+		}
+	}
+	return in
 }
 
-func newLoggedServer(t *testing.T, log *slog.Logger) *httptest.Server {
+// newServer serves the game's websocket, new guests joining "meadow": 5 x 5, one chunk, everyone spawns in its center.
+// Rooms tick for real until the test ends.
+func newServer(t *testing.T) *httptest.Server {
+	return newLoggedServer(t, "meadow", logs.Discard())
+}
+
+// newWorldServer is newServer with new guests joining "world": 1024 x 512, wrapping, where players spawn on (40, 40),
+// then (300, 40), then (70, 40), in turn.
+func newWorldServer(t *testing.T) *httptest.Server {
+	return newLoggedServer(t, "world", logs.Discard())
+}
+
+func newLoggedServer(t *testing.T, home string, log *slog.Logger) *httptest.Server {
 	t.Helper()
+	meadow := core.Grid{Width: 5, Height: 5}
+	world := core.Grid{Width: 1024, Height: 512, Wraps: true}
 	maps := map[string]app.World{
-		"meadow": &openWorld{grid: core.Grid{Width: 5, Height: 5}, spawns: []core.Cell{{Col: 2, Row: 2}}},
-		"world": &openWorld{grid: core.Grid{Width: 1024, Height: 512, Wraps: true},
-			spawns: []core.Cell{{Col: 40, Row: 40}, {Col: 300, Row: 40}, {Col: 70, Row: 40}}},
+		"meadow": &openWorld{grid: meadow, spawns: []core.Cell{{Col: 2, Row: 2}},
+			info: core.MapInfo{ID: "m1", Slug: "meadow", Name: "Meadow", Width: 5, Height: 5, Regions: []core.RegionInfo{{ID: 1, Name: "Glade", Biome: "meadow"}}}},
+		"world": &openWorld{grid: world, spawns: []core.Cell{{Col: 40, Row: 40}, {Col: 300, Row: 40}, {Col: 70, Row: 40}},
+			info: core.MapInfo{ID: "m2", Slug: "world", Name: "World", Width: 1024, Height: 512, Wraps: true}},
 	}
 	hub := app.NewHub(t.Context(), func(_ context.Context, slug string) (app.World, error) {
 		if world, ok := maps[slug]; ok {
 			return world, nil
 		}
 		return nil, fmt.Errorf("no map %q: %w", slug, errd.ErrNotFound)
-	}, time.Now, log)
+	}, time.Now, home, log)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/maps/{slug}/ws", wstransport.NewHandler(hub, []string{"localhost:5180"}, log))
+	mux.Handle("GET /api/ws", wstransport.NewHandler(hub, []string{"localhost:5180"}, log))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
@@ -130,7 +157,7 @@ func TestEveryActionIsLoggedWithoutTheGuestID(t *testing.T) {
 	var out lockedBuffer
 	log, err := logs.New("debug", &out)
 	require.NoError(t, err)
-	server := newLoggedServer(t, log)
+	server := newLoggedServer(t, "meadow", log)
 
 	conn := join(t, server, ann, "Ann")
 	write(t, conn, `{"type": "dance"}`)
@@ -143,7 +170,7 @@ func TestEveryActionIsLoggedWithoutTheGuestID(t *testing.T) {
 	require.Eventually(t, func() bool { return strings.Contains(out.String(), "ws closed") }, 2*time.Second, 10*time.Millisecond)
 
 	logged := out.String()
-	for _, action := range []string{"ws connecting", "room opened", "ws open", "msg=join", "chunks sent", "ws message ignored",
+	for _, action := range []string{"ws connecting", "room opened", "ws open", "join: at the spawn", "connect: a new guest", "chunks sent", "ws message ignored",
 		"plan: path found", "walk: path set", "msg=step", "step: arrived", "msg=leave", "ws closed"} {
 		assert.Contains(t, logged, action)
 	}
@@ -151,14 +178,14 @@ func TestEveryActionIsLoggedWithoutTheGuestID(t *testing.T) {
 	assert.NotContains(t, logged, ann, "the guest id is a secret")
 }
 
-func dial(t *testing.T, server *httptest.Server, slug, player, name, origin string) (*websocket.Conn, *http.Response, error) {
+func dial(t *testing.T, server *httptest.Server, player, name, origin string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
-	return dialQuery(t, server, slug, url.Values{"player": {player}, "name": {name}}, origin)
+	return dialQuery(t, server, url.Values{"player": {player}, "name": {name}}, origin)
 }
 
-func dialQuery(t *testing.T, server *httptest.Server, slug string, query url.Values, origin string) (*websocket.Conn, *http.Response, error) {
+func dialQuery(t *testing.T, server *httptest.Server, query url.Values, origin string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
-	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/maps/" + slug + "/ws?" + query.Encode()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws?" + query.Encode()
 	conn, res, err := websocket.Dial(context.Background(), address, &websocket.DialOptions{
 		HTTPHeader: http.Header{"Origin": {origin}},
 	})
@@ -168,17 +195,17 @@ func dialQuery(t *testing.T, server *httptest.Server, slug string, query url.Val
 	return conn, res, err
 }
 
-// join connects a player to "meadow", and reads its welcome and its only chunk.
+// join connects a new player, who lands on "meadow", and reads its welcome and its only chunk.
 func join(t *testing.T, server *httptest.Server, player, name string) *websocket.Conn {
 	t.Helper()
-	conn, _ := joinMap(t, server, "meadow", player, name, 1)
+	conn, _ := joinWith(t, server, player, name, 1)
 	return conn
 }
 
-// joinMap connects a player to a map, and reads its welcome and its first chunks.
-func joinMap(t *testing.T, server *httptest.Server, slug, player, name string, chunks int) (*websocket.Conn, map[string]any) {
+// joinWith connects a player, and reads its welcome and its first chunks.
+func joinWith(t *testing.T, server *httptest.Server, player, name string, chunks int) (*websocket.Conn, map[string]any) {
 	t.Helper()
-	conn, _, err := dial(t, server, slug, player, name, front)
+	conn, _, err := dial(t, server, player, name, front)
 	require.NoError(t, err)
 	welcome := read(t, conn)
 	assert.Equal(t, "welcome", welcome["type"])
@@ -231,7 +258,7 @@ func TestPlayersSeeEachOtherJoinWalkAndLeave(t *testing.T) {
 
 	write(t, annConn, `{"type": "plan", "col": 4, "row": 2}`)
 	path := []any{cellJSON(3, 2), cellJSON(4, 2)}
-	assert.Equal(t, map[string]any{"type": "planned", "col": 4.0, "row": 2.0, "path": path}, read(t, annConn))
+	assert.Equal(t, map[string]any{"type": "planned", "col": 4.0, "row": 2.0, "path": path, "action": "move"}, read(t, annConn))
 
 	write(t, annConn, `{"type": "walk", "col": 4, "row": 2}`)
 	assert.Equal(t, map[string]any{"type": "walking", "path": path}, read(t, annConn))
@@ -248,7 +275,7 @@ func TestPlayersSeeEachOtherJoinWalkAndLeave(t *testing.T) {
 func TestNoPathIsAnEmptyList(t *testing.T) {
 	conn := join(t, newServer(t), ann, "Ann")
 	write(t, conn, `{"type": "plan", "col": 0, "row": 0}`)
-	assert.JSONEq(t, `{"type":"planned","col":0,"row":0,"path":[]}`, readText(t, conn))
+	assert.JSONEq(t, `{"type":"planned","col":0,"row":0,"path":[],"action":"move"}`, readText(t, conn))
 	write(t, conn, `{"type": "walk", "col": 9, "row": 9}`)
 	assert.JSONEq(t, `{"type":"walking","path":[]}`, readText(t, conn))
 }
@@ -257,7 +284,7 @@ func TestNoPathIsAnEmptyList(t *testing.T) {
 func TestNoMessageCarriesAGuestID(t *testing.T) {
 	server := newServer(t)
 	bobConn := join(t, server, bob, "Bob")
-	annConn, _, err := dial(t, server, "meadow", ann, "Ann", front)
+	annConn, _, err := dial(t, server, ann, "Ann", front)
 	require.NoError(t, err)
 
 	texts := []string{readText(t, annConn), readText(t, annConn), readText(t, bobConn)} // ann's welcome and chunk, bob told ann joined
@@ -274,18 +301,17 @@ func TestNoMessageCarriesAGuestID(t *testing.T) {
 func TestRefusedBeforeTheUpgrade(t *testing.T) {
 	server := newServer(t)
 	cases := []struct {
-		name, slug, player, playerName, origin string
-		status                                 int
+		name, player, playerName, origin string
+		status                           int
 	}{
-		{"a bad player id", "meadow", "not-a-uuid", "Ann", front, http.StatusBadRequest},
-		{"an empty name", "meadow", ann, "  ", front, http.StatusBadRequest},
-		{"a name too long", "meadow", ann, strings.Repeat("a", 25), front, http.StatusBadRequest},
-		{"an unknown map", "nowhere", ann, "Ann", front, http.StatusNotFound},
-		{"a foreign origin", "meadow", ann, "Ann", "http://evil.example", http.StatusForbidden},
+		{"a bad player id", "not-a-uuid", "Ann", front, http.StatusBadRequest},
+		{"an empty name", ann, "  ", front, http.StatusBadRequest},
+		{"a name too long", ann, strings.Repeat("a", 25), front, http.StatusBadRequest},
+		{"a foreign origin", ann, "Ann", "http://evil.example", http.StatusForbidden},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, res, err := dial(t, server, c.slug, c.player, c.playerName, c.origin)
+			_, res, err := dial(t, server, c.player, c.playerName, c.origin)
 			require.Error(t, err)
 			require.NotNil(t, res)
 			assert.Equal(t, c.status, res.StatusCode)
@@ -298,7 +324,7 @@ func TestAMalformedRobotIsRefusedBeforeTheUpgrade(t *testing.T) {
 	server := newServer(t)
 	for _, robot := range []string{"Dome", "dome head", "<b>", strings.Repeat("a", 33)} {
 		query := url.Values{"player": {ann}, "name": {"Ann"}, "robot": {robot}}
-		_, res, err := dialQuery(t, server, "meadow", query, front)
+		_, res, err := dialQuery(t, server, query, front)
 		require.Error(t, err, robot)
 		require.NotNil(t, res, robot)
 		assert.Equal(t, http.StatusBadRequest, res.StatusCode, robot)
@@ -308,12 +334,12 @@ func TestAMalformedRobotIsRefusedBeforeTheUpgrade(t *testing.T) {
 // ADR 0006 test 6
 func TestWelcomeAndJoinedCarryTheRobots(t *testing.T) {
 	server := newServer(t)
-	bobConn, _, err := dialQuery(t, server, "meadow", url.Values{"player": {bob}, "name": {"Bob"}, "robot": {"rusty-toy"}}, front)
+	bobConn, _, err := dialQuery(t, server, url.Values{"player": {bob}, "name": {"Bob"}, "robot": {"rusty-toy"}}, front)
 	require.NoError(t, err)
 	read(t, bobConn) // welcome
 	read(t, bobConn) // chunk
 
-	annConn, _, err := dialQuery(t, server, "meadow", url.Values{"player": {ann}, "name": {"Ann"}, "robot": {"dome-head"}}, front)
+	annConn, _, err := dialQuery(t, server, url.Values{"player": {ann}, "name": {"Ann"}, "robot": {"dome-head"}}, front)
 	require.NoError(t, err)
 
 	robots := map[string]any{}
@@ -352,7 +378,7 @@ func TestBadMessages(t *testing.T) {
 
 // ADR 0003 test 22
 func TestAPlayerGetsTheWelcomeThenTheChunksAround(t *testing.T) {
-	conn, _, err := dial(t, newServer(t), "world", ann, "Ann", front)
+	conn, _, err := dial(t, newWorldServer(t), ann, "Ann", front)
 	require.NoError(t, err)
 
 	assert.Equal(t, "welcome", read(t, conn)["type"])
@@ -383,11 +409,11 @@ func TestAPlayerGetsTheWelcomeThenTheChunksAround(t *testing.T) {
 
 // ADR 0003 test 23
 func TestOnlyPlayersCloseEnoughSeeAWalk(t *testing.T) {
-	server := newServer(t)
-	annConn, _ := joinMap(t, server, "world", ann, "Ann", 9) // spawns on (40, 40)
-	farConn, _ := joinMap(t, server, "world", bob, "Bob", 9) // spawns on (300, 40): far
+	server := newWorldServer(t)
+	annConn, _ := joinWith(t, server, ann, "Ann", 9) // spawns on (40, 40)
+	farConn, _ := joinWith(t, server, bob, "Bob", 9) // spawns on (300, 40): far
 	carl := "00000000-0000-0000-0000-00000000000c"
-	nearConn, welcome := joinMap(t, server, "world", carl, "Carl", 9) // spawns on (70, 40): near ann
+	nearConn, welcome := joinWith(t, server, carl, "Carl", 9) // spawns on (70, 40): near ann
 	assert.Len(t, welcome["players"], 2, "carl sees ann and himself, not bob")
 	assert.Equal(t, "joined", read(t, annConn)["type"], "ann sees carl come")
 
@@ -406,7 +432,7 @@ func TestOnlyPlayersCloseEnoughSeeAWalk(t *testing.T) {
 // inflates past 1 KB still closes the connection.
 func TestACompressedMessageOverTheLimitClosesTheConnection(t *testing.T) {
 	server := newServer(t)
-	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/maps/meadow/ws?" + url.Values{"player": {ann}, "name": {"Ann"}}.Encode()
+	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws?" + url.Values{"player": {ann}, "name": {"Ann"}}.Encode()
 	conn, res, err := websocket.Dial(context.Background(), address, &websocket.DialOptions{
 		HTTPHeader:      http.Header{"Origin": {front}},
 		CompressionMode: websocket.CompressionNoContextTakeover,
@@ -451,4 +477,67 @@ func TestTeleportOverTheWire(t *testing.T) {
 		write(t, annConn, `{"type": "plan", "col": 4, "row": 3}`)
 		assert.Equal(t, "planned", read(t, annConn)["type"], "the first answer is the valid plan's: nothing moved")
 	})
+}
+
+// ADR 0012 test 20
+func TestTheGamesSocket(t *testing.T) {
+	server := newServer(t)
+
+	t.Run("welcome carries the map, as the HTTP API describes it", func(t *testing.T) {
+		conn, _, err := dial(t, server, ann, "Ann", front)
+		require.NoError(t, err)
+		welcome := read(t, conn)
+		assert.Equal(t, map[string]any{
+			"id": "m1", "slug": "meadow", "name": "Meadow", "width": 5.0, "height": 5.0, "wraps": false, "chunkSize": 32.0,
+			"regions": []any{map[string]any{"id": 1.0, "name": "Glade", "biome": "meadow"}}, "standsOn": nil,
+		}, welcome["map"])
+	})
+
+	t.Run("the socket of a map is gone", func(t *testing.T) {
+		address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/maps/meadow/ws?" + url.Values{"player": {bob}, "name": {"Bob"}}.Encode()
+		_, res, err := websocket.Dial(context.Background(), address, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {front}}})
+		require.Error(t, err)
+		require.NotNil(t, res)
+		assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	})
+}
+
+// ADR 0012 tests 21 and 22
+func TestEnterAndExitOverTheWire(t *testing.T) {
+	conn := join(t, newServer(t), ann, "Ann")
+
+	t.Run("they reach the player's session", func(t *testing.T) {
+		write(t, conn, `{"type": "enter", "col": 1, "row": 1}`)
+		assert.Equal(t, map[string]any{"type": "refused", "request": "enter", "reason": "There's no dome at (1, 1)"}, read(t, conn))
+		write(t, conn, `{"type": "exit", "col": -1, "row": 2}`)
+		assert.Equal(t, map[string]any{"type": "refused", "request": "exit", "reason": "Meadow stands nowhere on the world"}, read(t, conn))
+	})
+
+	t.Run("malformed ones are ignored", func(t *testing.T) {
+		write(t, conn, `{"type": "enter", "col": 1}`)
+		write(t, conn, `{"type": "exit", "col": 1.5, "row": 2}`)
+		write(t, conn, `{"type": "enter", "col": "1", "row": 2}`)
+		write(t, conn, `{"type": "plan", "col": 4, "row": 2}`)
+		assert.Equal(t, "planned", read(t, conn)["type"], "the first answer is the valid plan's")
+	})
+}
+
+// ADR 0012 test 22: a dome tells the map it leads to; a rock tells nothing more.
+func TestADomeTellsWhereItLeads(t *testing.T) {
+	world := &openWorld{grid: core.Grid{Width: 32, Height: 32}, spawns: []core.Cell{{Col: 2, Row: 2}}, info: core.MapInfo{Slug: "plain"}}
+	world.domes = []core.PlacedObject{{ID: "d1", Kind: "dome", Cell: core.Cell{Col: 4, Row: 4}, LeadsTo: "doma-1"}}
+	hub := app.NewHub(t.Context(), func(context.Context, string) (app.World, error) { return world, nil }, time.Now, "plain", logs.Discard())
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/ws", wstransport.NewHandler(hub, []string{"localhost:5180"}, logs.Discard()))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	conn, _, err := dial(t, server, ann, "Ann", front)
+	require.NoError(t, err)
+	read(t, conn) // welcome
+	chunk := read(t, conn)
+	assert.Equal(t, []any{
+		map[string]any{"id": "r[0,0]", "kind": "rock", "col": 0.0, "row": 0.0},
+		map[string]any{"id": "d1", "kind": "dome", "col": 4.0, "row": 4.0, "leadsTo": "doma-1"},
+	}, chunk["objects"])
 }

@@ -53,7 +53,7 @@ func TestValidate(t *testing.T) {
 
 	cases := map[string]func(m *domain.Map){
 		"a width of 0":                   func(m *domain.Map) { m.Width = 0 },
-		"a width not a multiple of 32":   func(m *domain.Map) { m.Width = 48 },
+		"a width not a multiple of 16":   func(m *domain.Map) { m.Width = 40 },
 		"a height over 4096":             func(m *domain.Map) { m.Height = 4128 },
 		"a wrapping map under 160 cells": func(m *domain.Map) { m.Wraps = true },
 		"a chunk outside the map": func(m *domain.Map) {
@@ -63,7 +63,7 @@ func TestValidate(t *testing.T) {
 			m.Chunks[core.ChunkKey{CX: 1}] = domain.NewChunk(core.ChunkKey{}, domain.TileGrass)
 		},
 		"a chunk at version 0":         func(m *domain.Map) { firstChunk(m).Version = 0 },
-		"an unknown ground code":       func(m *domain.Map) { firstChunk(m).Ground[3] = domain.TileKind(9) },
+		"an unknown ground code":       func(m *domain.Map) { firstChunk(m).Ground[3] = domain.TileKind(10) },
 		"a cell in an unknown region":  func(m *domain.Map) { firstChunk(m).Region[0] = 3 },
 		"a region with id 0":           func(m *domain.Map) { m.Regions[0].ID = 0 },
 		"two regions with one id":      func(m *domain.Map) { m.Regions[1].ID = 1 },
@@ -102,7 +102,7 @@ func TestValidate(t *testing.T) {
 			m.SetGround(cell(2, 2), domain.TileGlacier)
 			m.Objects = []domain.Object{rock(2, 2)}
 		},
-		"the ground code past glacier (ADR 0009)": func(m *domain.Map) { firstChunk(m).Ground[3] = domain.TileGlacier + 1 },
+		"the ground code past wall (ADR 0012)": func(m *domain.Map) { firstChunk(m).Ground[3] = domain.TileWall + 1 },
 	}
 	for name, breakIt := range cases {
 		t.Run("refuses "+name, func(t *testing.T) {

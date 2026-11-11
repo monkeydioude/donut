@@ -19,6 +19,14 @@ func TestTheCommittedWorldPassesEveryCheck(t *testing.T) {
 	assert.NotEmpty(t, world.Objects)
 }
 
+// ADR 0012 test 7
+func TestTheCommittedDoma1PassesEveryCheck(t *testing.T) {
+	city, err := mapfiles.Read("doma-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.GenerateCity(domain.Doma1()).Summary, city.Summary)
+	assert.Equal(t, []string{"doma-1", "world"}, mapfiles.Slugs())
+}
+
 func TestReadRefusesAMapItDoesNotHave(t *testing.T) {
 	for _, slug := range []string{"nowhere", "../world", "world/..", ""} {
 		_, err := mapfiles.Read(slug)

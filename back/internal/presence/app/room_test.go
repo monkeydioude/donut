@@ -44,12 +44,20 @@ type fakeWorld struct {
 	grid  core.Grid
 	rocks map[core.Cell]bool
 	spawn core.Cell
+	info  core.MapInfo
+	domes []core.Dome
+	edge  []core.Cell
+	walls map[core.Cell]bool
 }
 
 func (w *fakeWorld) Grid() core.Grid { return w.grid }
 
 func (w *fakeWorld) IsWalkable(c core.Cell) bool {
-	return w.grid.Contains(c) && !w.rocks[c]
+	if !w.grid.Contains(c) || w.rocks[c] || w.walls[c] {
+		return false
+	}
+	_, onDome := w.DomeAt(c)
+	return !onDome
 }
 
 func (w *fakeWorld) SpawnPoint() (core.Cell, error) { return w.spawn, nil }
@@ -69,6 +77,33 @@ func (w *fakeWorld) Path(from, to core.Cell) []core.Cell {
 		path = append(path, at)
 	}
 	return path
+}
+
+// Info, the domes, the edge and the outside: an open map has no door, unless a test adds one (ADR 0012).
+func (w *fakeWorld) Info() core.MapInfo { return w.info }
+
+func (w *fakeWorld) DomeAt(c core.Cell) (core.Dome, bool) {
+	for _, dome := range w.domes {
+		if dome.Covers(w.grid, c) {
+			return dome, true
+		}
+	}
+	return core.Dome{}, false
+}
+
+func (w *fakeWorld) DomeLeadingTo(slug string) (core.Dome, bool) {
+	for _, dome := range w.domes {
+		if dome.LeadsTo == slug {
+			return dome, true
+		}
+	}
+	return core.Dome{}, false
+}
+
+func (w *fakeWorld) Edge() []core.Cell { return w.edge }
+
+func (w *fakeWorld) IsOutside(c core.Cell) bool {
+	return !w.grid.Wraps && (!w.grid.Contains(c) || w.walls[c])
 }
 
 // Chunk gives contents holding only their key: tests check which chunks are sent, not what is in them.
@@ -119,7 +154,7 @@ func newWorldOn(grid core.Grid, rocks ...core.Cell) world {
 	for _, rock := range rocks {
 		fake.rocks[rock] = true
 	}
-	return world{room: app.NewRoom("world", fake, clock.now, logs.Discard()), clock: clock, world: fake}
+	return world{room: app.NewRoom("world", fake, clock.now, logs.Discard(), nil), clock: clock, world: fake}
 }
 
 // tickAfter moves the clock forward, then ticks the room.
@@ -173,11 +208,11 @@ func TestPlanTellsThePathWithoutMoving(t *testing.T) {
 	w.room.Plan(ann, annClient, cell(4, 2))
 	w.tickAfter(time.Second)
 
-	assert.Equal(t, []domain.Event{domain.Planned{To: cell(4, 2), Path: []core.Cell{cell(3, 2), cell(4, 2)}}}, annClient.take())
+	assert.Equal(t, []domain.Event{domain.Planned{To: cell(4, 2), Path: []core.Cell{cell(3, 2), cell(4, 2)}, Action: domain.ActionMove}}, annClient.take())
 	assert.Empty(t, bobClient.take(), "the others learn nothing, nobody moved")
 
 	w.room.Plan(ann, annClient, rock)
-	assert.Equal(t, []domain.Event{domain.Planned{To: rock}}, annClient.take(), "no path to a rock")
+	assert.Equal(t, []domain.Event{domain.Planned{To: rock, Action: domain.ActionMove}}, annClient.take(), "no path to a rock")
 }
 
 // ADR 0002 test 8
@@ -251,27 +286,58 @@ func TestLeavingStopsTheWalkAndComingBackStandsWhereItGot(t *testing.T) {
 	assert.Empty(t, bobClient.take(), "a player who left doesn't walk")
 
 	again := &fakeClient{}
-	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann"}, again))
+	require.True(t, w.room.Return(domain.Profile{ID: ann, Name: "Ann"}, again))
 	welcome := again.take()[0].(domain.Welcome)
 	assert.Contains(t, welcome.Players, domain.Player{ID: ann, Name: "Ann", Cell: cell(1, 1)})
 	w.tickAfter(time.Second)
 	assert.Empty(t, bobClient.take()[1:], "the walk doesn't come back with her") // [0] is her joined
 }
 
-// ADR 0002 test 12
-func TestTooManyRequestsAreIgnored(t *testing.T) {
-	w := newWorld()
-	annClient, _ := joinBoth(t, w.room)
+// ADR 0012 test 14: a room puts a player back only on a walkable cell they left; the hub sends the others home.
+func TestReturning(t *testing.T) {
+	t.Run("never here: not placed", func(t *testing.T) {
+		w := newWorld()
+		client := &fakeClient{}
+		assert.False(t, w.room.Return(domain.Profile{ID: ann, Name: "Ann"}, client))
+		assert.Empty(t, client.take())
+	})
 
-	for range domain.MaxRequestsPerSecond {
-		w.room.Plan(ann, annClient, cell(4, 2))
-	}
-	w.room.Walk(ann, annClient, cell(4, 2))
-	assert.Len(t, annClient.take(), domain.MaxRequestsPerSecond, "the 11th request is ignored")
+	t.Run("left from a cell that isn't walkable anymore: not placed, and nobody told", func(t *testing.T) {
+		w := newWorld()
+		annClient, bobClient := joinBoth(t, w.room)
+		w.room.Walk(ann, annClient, cell(3, 3))
+		w.tickAfter(0)
+		w.room.Leave(ann, annClient)
+		bobClient.take()
 
-	w.clock.advance(time.Second / domain.MaxRequestsPerSecond)
-	w.room.Plan(ann, annClient, cell(4, 2))
-	assert.Len(t, annClient.take(), 1, "time gives requests back")
+		w.world.rocks[cell(3, 3)] = true
+		again := &fakeClient{}
+		assert.False(t, w.room.Return(domain.Profile{ID: ann, Name: "Ann"}, again))
+		assert.Empty(t, again.take())
+		assert.Empty(t, bobClient.take())
+	})
+
+	t.Run("still here on another connection, even on a cell that isn't walkable: kept there", func(t *testing.T) {
+		w := newWorld()
+		annClient, _ := joinBoth(t, w.room)
+		w.room.Teleport(ann, annClient, rock)
+
+		newTab := &fakeClient{}
+		require.True(t, w.room.Return(domain.Profile{ID: ann, Name: "Ann"}, newTab))
+		assert.True(t, annClient.closed)
+		assert.Contains(t, newTab.take()[0].(domain.Welcome).Players, domain.Player{ID: ann, Name: "Ann", Cell: rock})
+	})
+
+	t.Run("joining after leaving: at the spawn, not where they left", func(t *testing.T) {
+		w := newWorld()
+		annClient, _ := joinBoth(t, w.room)
+		w.room.Teleport(ann, annClient, cell(0, 0))
+		w.room.Leave(ann, annClient)
+
+		again := &fakeClient{}
+		require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann"}, again))
+		assert.Contains(t, again.take()[0].(domain.Welcome).Players, domain.Player{ID: ann, Name: "Ann", Cell: center})
+	})
 }
 
 // ADR 0002 test 13

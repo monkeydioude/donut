@@ -47,6 +47,13 @@ Since ADR 0011, massifs and the glacier ring rise to +6, so a player just behind
 wrong. Once players are sorted with the ground, a player hidden behind terrain should show as a silhouette through
 it.
 
+## Each world cell's own 16 × 16 map, and fights on it
+
+The world map is an overworld: each of its cells stands for a 16 × 16 local map (ADR 0012). Only cities exist as
+local maps so far. Later, T-RPG fights (like FFTA) started on a world cell happen on that cell's 16 × 16 map, made
+from its terrain: its ground kind as the terrain's material, its height, what stands on it. How a cell's map is made,
+kept and shared between the players fighting there is to be designed.
+
 ## Hand edits that survive the generator
 
 The starter map is generated once, then edited by hand (ADR 0007). Generating it again overwrites the hand edits. Hand

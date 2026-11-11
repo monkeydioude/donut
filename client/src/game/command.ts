@@ -1,9 +1,10 @@
-import type { Cell, ServerMessage } from '../net/protocol';
+import type { Cell, CellAction, ServerMessage } from '../net/protocol';
 
-/** A tile you clicked, and the path to it once the server answered. */
+/** A tile you clicked, what a click there does, and the path to it once the server answered (ADR 0012). */
 export interface Selection {
   cell: Cell;
-  /** Null while the server answers; empty when there is no path. */
+  action: CellAction;
+  /** Null while the server answers; empty when there is no path, or the server's action isn't this one. */
   path: readonly Cell[] | null;
 }
 
@@ -17,10 +18,10 @@ export interface CommandState {
 
 export type CommandEvent =
   | { type: 'hover'; cell: Cell | null }
-  | { type: 'select'; cell: Cell }
+  | { type: 'select'; cell: Cell; action: CellAction }
   | { type: 'cancel' }
-  /** Move was chosen in the menu: the walk is asked, the menu closes. */
-  | { type: 'move' }
+  /** The menu's action was chosen: the walk (or the door) is asked, the menu closes. */
+  | { type: 'act' }
   | { type: 'server'; message: ServerMessage; you: string | null };
 
 export function initialCommand(): CommandState {
@@ -32,17 +33,17 @@ export function applyCommand(state: CommandState, event: CommandEvent): CommandS
     case 'hover':
       return { ...state, hover: event.cell };
     case 'select':
-      return { ...state, selection: { cell: event.cell, path: null } };
+      return { ...state, selection: { cell: event.cell, action: event.action, path: null } };
     case 'cancel':
-    case 'move':
+    case 'act':
       return { ...state, selection: null };
     case 'server':
       return applyServer(state, event.message, event.you);
   }
 }
 
-/** The menu's Move is on once the server gave a path to the selected tile. */
-export function canMove(state: CommandState): boolean {
+/** The menu's action is on once the server gave a path to the selected tile, for that action. */
+export function canAct(state: CommandState): boolean {
   return (state.selection?.path?.length ?? 0) > 0;
 }
 
@@ -58,9 +59,9 @@ export function sameCell(a: Cell, b: Cell): boolean {
 function applyServer(state: CommandState, message: ServerMessage, you: string | null): CommandState {
   switch (message.type) {
     case 'planned':
-      // an answer to an older click is dropped
+      // an answer to an older click is dropped; one for another action than the menu's leaves it off
       return state.selection && sameCell(state.selection.cell, message)
-        ? { ...state, selection: { ...state.selection, path: message.path } }
+        ? { ...state, selection: { ...state.selection, path: message.action === state.selection.action ? message.path : [] } }
         : state;
     case 'walking':
       return { ...state, walking: message.path };

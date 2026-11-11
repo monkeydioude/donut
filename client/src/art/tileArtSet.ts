@@ -1,6 +1,8 @@
 import type { Rng } from '../core/rng';
 import type { ObjectKind } from '../map/worldMap';
 import { paintBridge, RAIL_PX } from './bridge';
+import { paintFloor, paintGlassFace, paintWallTop, type FloorLook, type GlassLook } from './city';
+import { domeFrame, paintDome } from './dome';
 import { blockFrame, type BlockShape } from './block';
 import { paintFace, paintRim, type FaceMaterial, type FaceSide } from './cliff';
 import type { Corner, Edge } from './edges';
@@ -49,6 +51,10 @@ export interface TerrainArt {
   mountain(look: MountainLook): PixelBuffer;
   /** A block of the glacier, in its block frame (ADR 0011). */
   glacier(look: GlacierLook): PixelBuffer;
+  /** A city's floor, the top of its dome's wall, and one level of the wall's glass face (ADR 0012). */
+  floor(look: FloorLook): PixelBuffer;
+  wallTop(): PixelBuffer;
+  glass(side: FaceSide, look: GlassLook): PixelBuffer;
 }
 
 /** Every sprite of the world painted in code: grass, the terrain and the objects. Players come from a sheet. */
@@ -73,7 +79,7 @@ export function createGeneratedArt({ tileWidth, tileHeight, rockHeadroom, levelP
   const blockFrameOf = (shape: BlockShape) => blockFrame(tileWidth, tileHeight, shape, levelPx);
   return {
     grass: { frame: tileFrame, paint: paintGrass },
-    objects: { rock: { frame: frame(rockHeadroom), paint: paintRock } },
+    objects: { rock: { frame: frame(rockHeadroom), paint: paintRock }, dome: { frame: domeFrame(tileWidth, tileHeight), paint: paintDome } },
     terrain: {
       levelPx,
       tileFrame,
@@ -87,6 +93,9 @@ export function createGeneratedArt({ tileWidth, tileHeight, rockHeadroom, levelP
       bridge: (rails) => paintBridge(bridgeFrame, rails),
       mountain: (look) => paintMountain(blockFrameOf(look.shape), look, levelPx),
       glacier: (look) => paintGlacier(blockFrameOf(look.shape), look, levelPx),
+      floor: (look) => paintFloor(tileFrame, look),
+      wallTop: () => paintWallTop(tileFrame),
+      glass: (side, look) => paintGlassFace(tileFrame, levelPx, side, look),
     },
   };
 }

@@ -1,5 +1,6 @@
 import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { CHUNK_SIZE, type Grid } from '../map/grid';
+import { gridOf, type MapDescription } from '../map/worldMap';
 
 /** The ring the donut mark moves on, in the donut sprite's pixels: its center, outer and inner radii. */
 export interface DonutRing {
@@ -22,8 +23,9 @@ export const BLINK_MS = 500;
 /** How far from an equator, in rows, the mark is a square: a chunk. */
 const EQUATOR_BAND = CHUNK_SIZE;
 
-/** The scales the map can be shown at, biggest first, and the smallest, used when none fits. */
-const MAP_SCALES = [2, 1, 0.5] as const;
+/** The scales the map can be shown at, biggest first, and the smallest, used when none fits: up to ×8 for a city's
+ * small map (ADR 0012). */
+const MAP_SCALES = [8, 4, 2, 1, 0.5] as const;
 const SMALLEST_SCALE = 0.5;
 
 /** Where a cell's mark goes on the rectangle: the middle of its pixel, at the map's scale. */
@@ -58,7 +60,7 @@ export function blinkOn(now: number): boolean {
   return Math.floor(now / BLINK_MS) % 2 === 0;
 }
 
-/** The biggest scale at which the map fits the room: ×2, ×1 or ×½, and ×½ when nothing fits. */
+/** The biggest scale at which the map fits the room, from ×8 down to ×½, and ×½ when nothing fits. */
 export function mapScale(map: Size, room: Size): number {
   const fits = (scale: number) => map.width * scale <= room.width && map.height * scale <= room.height;
   return MAP_SCALES.find(fits) ?? SMALLEST_SCALE;
@@ -70,4 +72,19 @@ export function mapCellAt(point: ScreenPoint, scale: number, map: Size): TilePoi
   const row = Math.floor(point.y / scale);
   const inside = col >= 0 && row >= 0 && col < map.width && row < map.height;
   return inside ? { col, row } : null;
+}
+
+/**
+ * Where you are on the donut (ADR 0012): your cell, on a map that wraps; in a city, the cell its dome stands on, on the
+ * world; nowhere on a map that doesn't wrap and stands nowhere.
+ */
+export function donutPlace(map: MapDescription, you: TilePoint | null): { cell: TilePoint; grid: Grid } | null {
+  if (map.wraps) return you && { cell: you, grid: gridOf(map) };
+  const place = map.standsOn;
+  return place && { cell: { col: place.col, row: place.row }, grid: { width: place.width, height: place.height, wraps: true } };
+}
+
+/** The line under the map's name: your region's, left out when it's the map's name, as in a city (ADR 0012). */
+export function regionLine(mapName: string, region: string | null): string {
+  return region === null || region === mapName ? '' : region;
 }

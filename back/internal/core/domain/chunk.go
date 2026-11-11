@@ -18,9 +18,11 @@ type ChunkContents struct {
 	Objects []PlacedObject
 }
 
-// PlacedObject is an object standing on a cell of the map.
+// PlacedObject is an object standing on the map: a dome stands on its back cell (ADR 0012).
 type PlacedObject struct {
 	ID   string
 	Kind string
 	Cell Cell
+	// LeadsTo is the map a dome leads to; empty for other kinds.
+	LeadsTo string
 }

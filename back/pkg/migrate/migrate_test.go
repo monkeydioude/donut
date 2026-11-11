@@ -34,12 +34,12 @@ func TestApplyRunsEveryMigrationOnce(t *testing.T) {
 	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema)
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()))
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql", "0007.up.sql", "0008.up.sql"}, appliedFiles(t, ctx, tx, schema))
 	var maps int
 	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "maps"}.Sanitize()).Scan(&maps))
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()), "a second run applies nothing, so it doesn't fail on existing tables")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql", "0007.up.sql", "0008.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0001 test 6
@@ -53,7 +53,7 @@ func TestApplyStopsOnABrokenMigration(t *testing.T) {
 	err := migrate.Apply(ctx, tx, files, schema, logs.Discard())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "9999.up.sql")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql", "0005.up.sql", "0006.up.sql", "0007.up.sql", "0008.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0003 test 10
@@ -95,16 +95,7 @@ func TestMigrationsDeleteEveryMap(t *testing.T) {
 // testMigrationDeletesEveryMap applies the migrations before the one given, makes a map, then applies them all.
 func testMigrationDeletesEveryMap(t *testing.T, migration string) {
 	ctx := context.Background()
-	tx := pgtest.Tx(t, ctx)
-	schema := pgtest.NewSchemaName()
-	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema).(fstest.MapFS)
-	before := fstest.MapFS{"init.sql": files["init.sql"]}
-	for name, file := range files {
-		if strings.HasPrefix(name, "up/") && name < "up/"+migration {
-			before[name] = file
-		}
-	}
-	require.NoError(t, migrate.Apply(ctx, tx, before, schema, logs.Discard()))
+	tx, schema, files := migratedBefore(t, ctx, migration)
 	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
 	var mapID string
 	require.NoError(t, tx.QueryRow(ctx, `INSERT INTO `+table("maps")+` (slug, name, width, height, wraps)
@@ -121,4 +112,52 @@ func testMigrationDeletesEveryMap(t *testing.T, migration string) {
 		require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+table(name)).Scan(&rows))
 		assert.Zero(t, rows, "%s is empty", name)
 	}
+}
+
+// migratedBefore is a transaction with the migrations before the one given applied to a schema of its own, and every
+// migration file, to apply them all next.
+func migratedBefore(t *testing.T, ctx context.Context, migration string) (pgx.Tx, string, fstest.MapFS) {
+	t.Helper()
+	tx := pgtest.Tx(t, ctx)
+	schema := pgtest.NewSchemaName()
+	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema).(fstest.MapFS)
+	before := fstest.MapFS{"init.sql": files["init.sql"]}
+	for name, file := range files {
+		if strings.HasPrefix(name, "up/") && name < "up/"+migration {
+			before[name] = file
+		}
+	}
+	require.NoError(t, migrate.Apply(ctx, tx, before, schema, logs.Discard()))
+	return tx, schema, files
+}
+
+// ADR 0012 test 10: migration 0007 keeps every map, and only domes lead to a map.
+func TestMigration0007AddsWhereDomesLead(t *testing.T) {
+	ctx := context.Background()
+	tx, schema, files := migratedBefore(t, ctx, "0007")
+	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	var mapID string
+	require.NoError(t, tx.QueryRow(ctx, `INSERT INTO `+table("maps")+` (slug, name, width, height, wraps)
+		VALUES ('world', 'World', 160, 160, true) RETURNING id`).Scan(&mapID))
+	_, err := tx.Exec(ctx, `INSERT INTO `+table("map_objects")+` (map_id, kind, col, row) VALUES ($1, 'rock', 0, 0)`, mapID)
+	require.NoError(t, err)
+
+	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()))
+
+	var maps, rocks int
+	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+table("maps")).Scan(&maps))
+	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+table("map_objects")+` WHERE leads_to IS NULL`).Scan(&rocks))
+	assert.Equal(t, 1, maps, "the map stays")
+	assert.Equal(t, 1, rocks, "its rock too, leading nowhere")
+	insert := func(kind string, leadsTo any) error {
+		_, err := tx.Exec(ctx, `SAVEPOINT object`)
+		require.NoError(t, err)
+		_, err = tx.Exec(ctx, `INSERT INTO `+table("map_objects")+` (map_id, kind, col, row, leads_to) VALUES ($1, $2, 4, 4, $3)`, mapID, kind, leadsTo)
+		_, rollback := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT object`)
+		require.NoError(t, rollback)
+		return err
+	}
+	assert.NoError(t, insert("dome", "doma-1"))
+	assert.Error(t, insert("dome", nil), "a dome leads somewhere")
+	assert.Error(t, insert("rock", "doma-1"), "a rock leads nowhere")
 }

@@ -1,6 +1,6 @@
 import type { TilePoint } from '../iso/projection';
 import { CHUNK_SIZE, chunkId, chunkOf, chunkOrigin, normalize, type ChunkKey, type Grid } from './grid';
-import type { GroundKind, MapObject } from './worldMap';
+import { footprint, type GroundKind, type MapObject } from './worldMap';
 
 /** 32 x 32 cells of the map, as the server sent them: each cell's ground, height and region, row by row. */
 export interface Chunk {
@@ -45,6 +45,12 @@ export function withoutChunk(held: HeldChunks, key: ChunkKey): HeldChunks {
 /** The chunk holding a cell within the map, if it is held. */
 export function chunkAt(held: HeldChunks, cell: TilePoint): Chunk | undefined {
   return held.get(chunkId(chunkOf(cell)));
+}
+
+/** The dome covering a cell, null when none does or its chunk isn't held. A dome's footprint stays in its chunk. */
+export function domeAt(held: HeldChunks, cell: TilePoint): MapObject | null {
+  const covers = (object: MapObject) => footprint(object).some((c) => c.col === cell.col && c.row === cell.row);
+  return chunkAt(held, cell)?.objects.find((object) => object.kind === 'dome' && covers(object)) ?? null;
 }
 
 export function isHeld(held: HeldChunks, cell: TilePoint): boolean {

@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "slug": "doma-1",
+  "name": "Doma-1",
+  "width": 32,
+  "height": 32,
+  "wraps": false,
+  "regions": [
+    {
+      "id": 1,
+      "name": "Doma-1",
+      "biome": "dome",
+      "color": "#7fd99a"
+    }
+  ]
+}

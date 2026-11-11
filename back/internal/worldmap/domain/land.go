@@ -167,8 +167,8 @@ func (l *land) measureToWater() {
 
 // settleBanks keeps each cell within reach of water between L − (k − 1) and L + k for every water level L around
 // it, k its steps to the closest water at that level, so banks are at L or L + 1 and the ground steps up and down
-// between waters of different levels. Then it smooths the cliffs away. A cell that can't satisfy every water is left
-// as it is.
+// between waters of different levels. Then it smooths the cliffs away. A cell that can't satisfy every water, or a
+// fixed one, is left as it is.
 func (l *land) settleBanks() {
 	l.measureToWater()
 	lowest, highest := make([]int8, len(l.ground)), make([]int8, len(l.ground))
@@ -185,7 +185,7 @@ func (l *land) settleBanks() {
 		}
 	}
 	for i := range l.height {
-		if !isWater(l.ground[i]) && lowest[i] <= highest[i] {
+		if !isWater(l.ground[i]) && !l.fixed[i] && lowest[i] <= highest[i] {
 			l.height[i] = min(max(l.height[i], lowest[i]), highest[i])
 		}
 	}

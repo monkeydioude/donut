@@ -2,6 +2,7 @@
 //
 //	donut                    serves
 //	donut reset-map <slug>   replaces a map in the database with its file (ADR 0007), the server stopped
+//	donut reset-maps         replaces every map built into the server with its file (ADR 0012), the server stopped
 package main
 
 import (
@@ -73,18 +74,20 @@ func main() {
 	}
 }
 
-// runCommand serves without arguments, or replaces a map with its file for `reset-map <slug>`.
+// runCommand serves without arguments, or replaces maps with their files for `reset-map <slug>` and `reset-maps`.
 func runCommand(ctx context.Context, args []string, config Config, log *slog.Logger) error {
 	switch {
 	case len(args) == 0:
 		return serve(ctx, config, log)
 	case len(args) == 2 && args[0] == "reset-map":
-		return resetMap(ctx, config, args[1], log)
+		return resetMaps(ctx, config, args[1:], log)
+	case len(args) == 1 && args[0] == "reset-maps":
+		return resetMaps(ctx, config, mapfiles.Slugs(), log)
 	}
-	return errors.New("usage: donut [reset-map <slug>]")
+	return errors.New("usage: donut [reset-map <slug> | reset-maps]")
 }
 
-// serve opens the database, migrates it, makes sure a map exists, then answers until SIGINT or SIGTERM.
+// serve opens the database, migrates it, saves the map files it doesn't have yet, then answers until SIGINT or SIGTERM.
 func serve(ctx context.Context, config Config, log *slog.Logger) error {
 	log.Info("donut API booting", "port", config.APIPort, "db", config.RedactedDBURL(), "front_origin", config.FrontOrigin,
 		"log_level", config.LogLevel)
@@ -97,7 +100,7 @@ func serve(ctx context.Context, config Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if _, err := maps.Service.EnsureStarterMap(ctx, mapfiles.Read); err != nil {
+	if _, err := maps.Service.EnsureMaps(ctx, mapfiles.Slugs(), mapfiles.Read); err != nil {
 		return err
 	}
 	return listen(ctx, &http.Server{
@@ -109,16 +112,16 @@ func serve(ctx context.Context, config Config, log *slog.Logger) error {
 	}, log)
 }
 
-// resetMap replaces a map in the database with the file built into the server. Run it with the server stopped: an
-// open room keeps the map it loaded.
-func resetMap(ctx context.Context, config Config, slug string, log *slog.Logger) error {
-	log.Info("donut reset-map", "slug", slug, "db", config.RedactedDBURL())
+// resetMaps replaces maps in the database with the files built into the server, each in its own transaction. Run it
+// with the server stopped: an open room keeps the map it loaded.
+func resetMaps(ctx context.Context, config Config, slugs []string, log *slog.Logger) error {
+	log.Info("donut reset-maps", "slugs", slugs, "db", config.RedactedDBURL())
 	pool, err := openDatabase(ctx, config, log)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	return worldmap.NewModule(pool, log).Service.ResetMap(ctx, slug, mapfiles.Read)
+	return worldmap.NewModule(pool, log).Service.ResetMaps(ctx, slugs, mapfiles.Read)
 }
 
 // openDatabase connects and migrates. The caller closes the pool.

@@ -14,8 +14,8 @@ export interface CameraConfig {
 export interface GameConfig {
   /** Seeds the generated art: which variants and which details. */
   seed: number;
-  /** The map to play on, as the back names it. */
-  mapSlug: string;
+  /** How long the screen takes to go dark, and to come back, between maps (ADR 0012). */
+  fadeMs: number;
   /** Size of a tile's ground diamond, in art pixels. */
   tile: { width: number; height: number };
   /** Room in art pixels above the ground for rocks. */
@@ -38,7 +38,7 @@ export interface GameConfig {
 export function createDefaultConfig(): GameConfig {
   return {
     seed: 42,
-    mapSlug: 'world',
+    fadeMs: 300,
     tile: { width: 32, height: 16 },
     rockHeadroom: 6,
     levelHeight: 8,

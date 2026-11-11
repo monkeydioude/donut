@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { blinkOn, donutMark, donutShape, mapCellAt, mapScale, rectangleMark } from './mapMarks';
+import { blinkOn, donutMark, donutPlace, donutShape, mapCellAt, mapScale, rectangleMark, regionLine } from './mapMarks';
+import { cityDescription, worldDescription } from '../testing/maps';
 
 const world = { width: 1024, height: 512, wraps: true };
 const ring = { center: { x: 32, y: 32 }, outer: 28, inner: 12 };
@@ -98,5 +99,28 @@ describe('mapCellAt', () => {
     expect(mapCellAt({ x: -0.1, y: 4 }, 1, map)).toBeNull();
     expect(mapCellAt({ x: 1024, y: 4 }, 1, map)).toBeNull();
     expect(mapCellAt({ x: 4, y: 1024 }, 2, map)).toBeNull();
+  });
+});
+
+// ADR 0012 test 29
+describe('the map screen in a city', () => {
+  it('shows Doma-1 at ×8 on a 1080p screen, and the world as before', () => {
+    const room = { width: 1920 - 48, height: 1080 - 48 };
+    expect(mapScale({ width: 32, height: 32 }, room)).toBe(8);
+    expect(mapScale({ width: 2048, height: 1024 }, room)).toBe(0.5);
+    expect(mapScale({ width: 160, height: 160 }, room)).toBe(4);
+  });
+
+  it("puts you on the donut: your cell on the world, the city's dome in a city, nowhere on a map that stands nowhere", () => {
+    expect(donutPlace(worldDescription(), { col: 7, row: 9 })).toEqual({ cell: { col: 7, row: 9 }, grid: { width: 1024, height: 512, wraps: true } });
+    expect(donutPlace(worldDescription(), null)).toBeNull();
+    expect(donutPlace(cityDescription(), { col: 3, row: 3 })).toEqual({ cell: { col: 1022, row: 510 }, grid: { width: 1024, height: 512, wraps: true } });
+    expect(donutPlace({ ...cityDescription(), standsOn: null }, { col: 3, row: 3 })).toBeNull();
+  });
+
+  it("leaves the region line out when it's the map's name", () => {
+    expect(regionLine('Doma-1', 'Doma-1')).toBe('');
+    expect(regionLine('World', 'Sprinkle Meadow')).toBe('Sprinkle Meadow');
+    expect(regionLine('World', null)).toBe('');
   });
 });

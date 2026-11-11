@@ -32,3 +32,29 @@ export function createRegionBanner(host: HTMLElement, log: Log = silent): Region
     },
   };
 }
+
+/** A banner that can wait: while the screen is dark between maps, the last name asked shows once it's light again. */
+export interface HeldBanner extends RegionBanner {
+  hold(): void;
+  release(): void;
+}
+
+/** Holds the names shown while held, and shows the last one on release (ADR 0012). */
+export function createHeldBanner(banner: RegionBanner): HeldBanner {
+  let held = false;
+  let waiting: string | null = null;
+  return {
+    show(name) {
+      if (held) waiting = name;
+      else banner.show(name);
+    },
+    hold() {
+      held = true;
+    },
+    release() {
+      held = false;
+      if (waiting !== null) banner.show(waiting);
+      waiting = null;
+    },
+  };
+}

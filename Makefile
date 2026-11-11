@@ -7,7 +7,7 @@ AIR := $(shell command -v air 2>/dev/null || echo "go run github.com/air-verse/a
 
 TEST_DB_URL ?= postgres://donut:donut@localhost:5434/donut
 
-.PHONY: help dev dev-back dev-front db test sprites world check-world reset-world
+.PHONY: help dev dev-back dev-front db test sprites world city check-world reset-world reset-maps
 
 help:
 	@echo "make dev   - database + back (port 8400, reloads with air) + front (port 5180); ctrl-c stops all"
@@ -15,8 +15,10 @@ help:
 	@echo "make test  - back tests (with the database) and front tests"
 	@echo "make sprites - rebuild the robot sprite sheet from the Pixel Art Atlas (needs the network)"
 	@echo "make world  - generate the starter map folder back/mapfiles/world; FORCE=1 overwrites hand edits"
+	@echo "make city   - generate Doma-1's map folder back/mapfiles/doma-1; FORCE=1 overwrites hand edits"
 	@echo "make check-world - check back/mapfiles/world as the server would, without a database"
 	@echo "make reset-world - replace the world in the database with back/mapfiles/world (stop the server first)"
+	@echo "make reset-maps - replace every map in the database with its folder in back/mapfiles (stop the server first)"
 
 # Runs every dev server in parallel; Ctrl+C stops them all.
 dev: db
@@ -50,9 +52,17 @@ WORLD_SEED ?= 42
 world:
 	cd back && go run ./cmd/mapfile generate -seed $(WORLD_SEED) -out mapfiles/world $(if $(FORCE),-force)
 
+# Doma-1, the first dome city (ADR 0012): generated once, then edited by hand, like the world.
+city:
+	cd back && go run ./cmd/mapfile city -out mapfiles/doma-1 $(if $(FORCE),-force)
+
 check-world:
 	cd back && go run ./cmd/mapfile check mapfiles/world
 
-# Rooms keep the map they loaded: run it with the server stopped.
+# Rooms keep the map they loaded: run them with the server stopped.
 reset-world: db
 	cd back && go run ./cmd/donut reset-map world
+
+# Every map folder of back/mapfiles, each in its own transaction (ADR 0012).
+reset-maps: db
+	cd back && go run ./cmd/donut reset-maps

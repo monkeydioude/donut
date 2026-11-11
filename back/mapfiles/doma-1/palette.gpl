@@ -1,0 +1,25 @@
+GIMP Palette
+Name: Donut map doma-1
+Columns: 8
+#
+116 211 165	ground.png: grass
+111 183 224	ground.png: water
+ 43  37  64	ground.png: hole
+185 138  90	ground.png: bridge
+ 79 159 216	ground.png: ocean
+138 134 148	ground.png: mountain
+223 244 251	ground.png: glacier
+217 210 195	ground.png: floor
+111 106 122	ground.png: wall
+ 30  58 138	height.png: height -3
+ 37  99 235	height.png: height -2
+ 56 189 248	height.png: height -1
+ 74 222 128	height.png: height 0
+250 204  21	height.png: height 1
+249 115  22	height.png: height 2
+220  38  38	height.png: height 3
+216 180 254	height.png: height 4
+168  85 247	height.png: height 5
+107  33 168	height.png: height 6
+127 217 154	regions.png: Doma-1
+210 206 197	objects.png: rock

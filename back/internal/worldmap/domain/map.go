@@ -14,6 +14,9 @@ const (
 	// MinWrappingSize is the smallest side of a wrapping map: 5 chunks, so a chunk never shows up twice
 	// in the 5 x 5 chunks a player holds.
 	MinWrappingSize = 5 * core.ChunkSize
+	// LocalSide is the side of the local map each world cell stands for (ADR 0012): the sides of a map that doesn't
+	// wrap are a multiple of it. A wrapping map's are a multiple of a chunk, so its seams fall on chunk borders.
+	LocalSide = 16
 	// MaxRegions is how many regions a map may have: a cell holds its region's id in one byte, 0 for none.
 	MaxRegions = 255
 	// MinHeight and MaxHeight bound a cell's height, in levels (ADR 0007, ADR 0011). Above MaxGroundHeight, only
@@ -43,11 +46,15 @@ const (
 	TileMountain
 	// TileGlacier is the ice of the ring at the inner ridge of the donut (ADR 0011): drawn, not walkable.
 	TileGlacier
+	// TileFloor is a city's paving (ADR 0012): walkable.
+	TileFloor
+	// TileWall is a dome's rim, at a city's edge (ADR 0012): drawn, not walkable.
+	TileWall
 )
 
 var tileNames = [...]string{
 	TileVoid: "void", TileGrass: "grass", TileWater: "water", TileHole: "hole", TileBridge: "bridge", TileOcean: "ocean",
-	TileMountain: "mountain", TileGlacier: "glacier",
+	TileMountain: "mountain", TileGlacier: "glacier", TileFloor: "floor", TileWall: "wall",
 }
 
 func (k TileKind) Known() bool {
@@ -56,7 +63,7 @@ func (k TileKind) Known() bool {
 
 // Walkable: one may walk on this ground, when nothing stands on it.
 func (k TileKind) Walkable() bool {
-	return k == TileGrass || k == TileBridge
+	return k == TileGrass || k == TileBridge || k == TileFloor
 }
 
 // RisesAboveGround: this ground may stand higher than MaxGroundHeight (ADR 0011).
@@ -70,27 +77,6 @@ func (k TileKind) String() string {
 		return fmt.Sprintf("unknown(%d)", uint8(k))
 	}
 	return tileNames[k]
-}
-
-// ObjectKind is what stands on a cell.
-type ObjectKind string
-
-const ObjectRock ObjectKind = "rock"
-
-func (k ObjectKind) Known() bool {
-	return k == ObjectRock
-}
-
-// Object stands on one cell. Its ID is empty until saved.
-type Object struct {
-	ID   string     `db:"id"`
-	Kind ObjectKind `db:"kind"`
-	Col  int        `db:"col"`
-	Row  int        `db:"row"`
-}
-
-func (o Object) Cell() core.Cell {
-	return core.Cell{Col: o.Col, Row: o.Row}
 }
 
 // Summary is a map without its contents.
@@ -110,10 +96,14 @@ func (s Summary) Grid() core.Grid {
 // Biome is how a region looks.
 type Biome string
 
-const BiomeMeadow Biome = "meadow"
+const (
+	BiomeMeadow Biome = "meadow"
+	// BiomeDome is a city under its dome (ADR 0012).
+	BiomeDome Biome = "dome"
+)
 
 func (b Biome) Known() bool {
-	return b == BiomeMeadow
+	return b == BiomeMeadow || b == BiomeDome
 }
 
 // Region is a named area of a map. Its cells hold its id, 1 to 255.
@@ -123,10 +113,12 @@ type Region struct {
 	Biome Biome  `db:"biome"`
 }
 
-// Description is a map without its cells: its size, its regions.
+// Description is a map without its cells: its size, its regions, and for a city where it stands (ADR 0012).
 type Description struct {
 	Summary
 	Regions []Region
+	// StandsOn is the dome a map's city is entered from, on another map; nil when no dome leads to it.
+	StandsOn *core.Place
 }
 
 // Map is a whole map: its chunks, its regions and the objects on it. A chunk missing from Chunks is all void.
@@ -136,14 +128,17 @@ type Map struct {
 	Objects []Object
 }
 
-// NewMap is a map whose every cell has the same ground, no region, and nothing on it.
+// NewMap is a map whose every cell has the same ground, no region, and nothing on it. The cells of its edge chunks
+// past a bounded map's edges are void.
 func NewMap(summary Summary, ground TileKind) Map {
 	m := Map{Description: Description{Summary: summary, Regions: []Region{}}, Chunks: map[core.ChunkKey]*Chunk{}, Objects: []Object{}}
 	grid := summary.Grid()
 	for cy := range grid.ChunkRows() {
 		for cx := range grid.ChunkColumns() {
 			key := core.ChunkKey{CX: cx, CY: cy}
-			m.Chunks[key] = NewChunk(key, ground)
+			chunk := NewChunk(key, ground)
+			chunk.voidOutside(grid)
+			m.Chunks[key] = chunk
 		}
 	}
 	return m
@@ -202,9 +197,13 @@ func (m Map) Validate() error {
 }
 
 func (m Map) validateSize() error {
+	step := core.ChunkSize
+	if !m.Wraps {
+		step = LocalSide
+	}
 	for _, side := range []int{m.Width, m.Height} {
-		if side < core.ChunkSize || side > MaxSize || side%core.ChunkSize != 0 {
-			return invalid("size %dx%d: each side is a multiple of %d from %d to %d", m.Width, m.Height, core.ChunkSize, core.ChunkSize, MaxSize)
+		if side < step || side > MaxSize || side%step != 0 {
+			return invalid("size %dx%d: each side is a multiple of %d from %d to %d", m.Width, m.Height, step, step, MaxSize)
 		}
 		if m.Wraps && side < MinWrappingSize {
 			return invalid("size %dx%d: a wrapping map is at least %d on each side", m.Width, m.Height, MinWrappingSize)
@@ -240,29 +239,9 @@ func (m Map) validateChunks() error {
 		if chunk.Key != key || !grid.HasChunk(key) {
 			return invalid("chunk %v is outside the map", key)
 		}
-		if err := chunk.validate(regions); err != nil {
+		if err := chunk.validate(grid, regions); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (m Map) validateObjects() error {
-	grid := m.Grid()
-	taken := make(map[core.Cell]bool, len(m.Objects))
-	for _, object := range m.Objects {
-		cell := object.Cell()
-		switch {
-		case !object.Kind.Known():
-			return invalid("unknown object kind %q", object.Kind)
-		case !grid.Contains(cell):
-			return invalid("object at %v is outside the map", cell)
-		case m.GroundAt(cell) != TileGrass:
-			return invalid("object at %v stands on %v, not grass", cell, m.GroundAt(cell))
-		case taken[cell]:
-			return invalid("two objects on %v", cell)
-		}
-		taken[cell] = true
 	}
 	return nil
 }

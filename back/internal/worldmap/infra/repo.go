@@ -29,12 +29,6 @@ func (r *Repo) ListMaps(ctx context.Context) ([]domain.Summary, error) {
 	return pg.CollectMany[domain.Summary](rows, err, "ListMaps")
 }
 
-func (r *Repo) CountMaps(ctx context.Context) (int, error) {
-	var count int
-	err := r.DB.QueryRow(ctx, `SELECT count(*) FROM maps`).Scan(&count)
-	return count, pg.Wrap(err, "CountMaps")
-}
-
 // DescriptionBySlug is a map's size and regions, without its cells.
 func (r *Repo) DescriptionBySlug(ctx context.Context, slug string) (domain.Description, error) {
 	rows, err := r.DB.Query(ctx, `SELECT `+summaryColumns+` FROM maps WHERE slug = $1`, slug)
@@ -44,7 +38,25 @@ func (r *Repo) DescriptionBySlug(ctx context.Context, slug string) (domain.Descr
 	}
 	rows, err = r.DB.Query(ctx, `SELECT id, name, biome FROM map_regions WHERE map_id = $1 ORDER BY id`, summary.ID)
 	regions, err := pg.CollectMany[domain.Region](rows, err, "DescriptionBySlug: regions")
-	return domain.Description{Summary: summary, Regions: regions}, err
+	if err != nil {
+		return domain.Description{}, err
+	}
+	standsOn, err := r.standsOn(ctx, slug)
+	return domain.Description{Summary: summary, Regions: regions, StandsOn: standsOn}, err
+}
+
+// standsOn is the dome leading to a map, on another map, with that map's size (ADR 0012); nil when none does. Two
+// maps with a dome leading to it would be a mistake: the first by slug is taken.
+func (r *Repo) standsOn(ctx context.Context, slug string) (*core.Place, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT m.slug AS map, o.col, o.row, m.width, m.height
+		FROM map_objects o JOIN maps m ON m.id = o.map_id
+		WHERE o.leads_to = $1 ORDER BY m.slug LIMIT 1`, slug)
+	places, err := pg.CollectMany[core.Place](rows, err, "DescriptionBySlug: stands on")
+	if err != nil || len(places) == 0 {
+		return nil, err
+	}
+	return &places[0], nil
 }
 
 // MapBySlug is a whole map: its description, its chunks and its objects.
@@ -57,7 +69,7 @@ func (r *Repo) MapBySlug(ctx context.Context, slug string) (domain.Map, error) {
 	if m.Chunks, err = r.chunksOf(ctx, m.ID); err != nil {
 		return domain.Map{}, err
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id, kind, col, row FROM map_objects WHERE map_id = $1 ORDER BY row, col`, m.ID)
+	rows, err := r.DB.Query(ctx, `SELECT id, kind, col, row, COALESCE(leads_to, '') AS leads_to FROM map_objects WHERE map_id = $1 ORDER BY row, col`, m.ID)
 	m.Objects, err = pg.CollectMany[domain.Object](rows, err, "MapBySlug: objects")
 	return m, err
 }
@@ -150,12 +162,15 @@ func insertChunks(ctx context.Context, tx coreinfra.Requester, mapID string, m d
 
 func insertObjects(ctx context.Context, tx coreinfra.Requester, mapID string, m domain.Map) error {
 	kinds, cols, rows := make([]string, len(m.Objects)), make([]int, len(m.Objects)), make([]int, len(m.Objects))
+	leadsTo := make([]string, len(m.Objects))
 	for i, object := range m.Objects {
-		kinds[i], cols[i], rows[i] = string(object.Kind), object.Col, object.Row
+		kinds[i], cols[i], rows[i], leadsTo[i] = string(object.Kind), object.Col, object.Row, object.LeadsTo
 	}
+	// a rock leads nowhere: its leads_to is NULL
 	_, err := tx.Exec(ctx, `
-		INSERT INTO map_objects (map_id, kind, col, row)
-		SELECT $1, kind, col, row FROM unnest($2::text[], $3::int[], $4::int[]) AS o(kind, col, row)`,
-		mapID, kinds, cols, rows)
+		INSERT INTO map_objects (map_id, kind, col, row, leads_to)
+		SELECT $1, kind, col, row, NULLIF(leads_to, '')
+		FROM unnest($2::text[], $3::int[], $4::int[], $5::text[]) AS o(kind, col, row, leads_to)`,
+		mapID, kinds, cols, rows, leadsTo)
 	return pg.Wrap(err, "InsertMap: objects")
 }

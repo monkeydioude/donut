@@ -12,11 +12,11 @@ import (
 	"donut/internal/worldmap/domain"
 )
 
-// flatStarter is the starter world without its terrain: flat grass and rocks.
+// flatStarter is the starter world without its terrain nor its dome: flat grass and rocks.
 func flatStarter() domain.GenerateOptions {
 	opts := domain.StarterWorld()
 	opts.Relief, opts.Landmasses, opts.Water, opts.Holes = domain.ReliefOptions{}, domain.LandmassOptions{}, domain.WaterOptions{}, domain.HoleOptions{}
-	opts.Mountains, opts.Glaciers = domain.MountainOptions{}, domain.GlacierOptions{}
+	opts.Mountains, opts.Glaciers, opts.Dome = domain.MountainOptions{}, domain.GlacierOptions{}, domain.DomeOptions{}
 	return opts
 }
 
@@ -622,8 +622,12 @@ func TestGeneratedMassifsAndRing(t *testing.T) {
 	m := starter()
 	grid := m.Grid()
 	spawn := spawnOf(t, m)
+	// the generator's spawn, where the pass and the massifs' clearance are measured from: Doma-1's dome stands on it,
+	// so the terrain's spawn is a cell beside it (ADR 0012)
+	center := domain.StarterWorld().Mountains.Spawn
+	require.Equal(t, center, domain.StarterWorld().Glaciers.Spawn)
 	ridge := m.Height / 2
-	inPass := func(c core.Cell) bool { return absInt(grid.Offset(spawn, c).Col) <= 48 }
+	inPass := func(c core.Cell) bool { return absInt(grid.Offset(center, c).Col) <= 48 }
 
 	t.Run("only mountains and glaciers rise above +3", func(t *testing.T) {
 		eachCell(m, func(c core.Cell) {
@@ -659,7 +663,7 @@ func TestGeneratedMassifsAndRing(t *testing.T) {
 
 	t.Run("no mountain within 24 cells of the spawn", func(t *testing.T) {
 		for _, c := range cellsOf(m, domain.TileMountain) {
-			offset := grid.Offset(spawn, c)
+			offset := grid.Offset(center, c)
 			require.GreaterOrEqual(t, math.Hypot(float64(offset.Col), float64(offset.Row)), 24.0, "the mountain at %v", c)
 		}
 	})

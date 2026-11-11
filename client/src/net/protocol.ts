@@ -1,6 +1,7 @@
 import type { Chunk } from '../map/chunks';
 import { CELLS_PER_CHUNK, CHUNK_SIZE, chunkOrigin, type ChunkKey } from '../map/grid';
-import { GROUND_KINDS, MAX_HEIGHT, MIN_HEIGHT, OBJECT_KINDS, type GroundKind, type MapObject } from '../map/worldMap';
+import { footprint, GROUND_KINDS, MAX_HEIGHT, MIN_HEIGHT, OBJECT_KINDS, type GroundKind, type MapDescription, type MapObject } from '../map/worldMap';
+import { parseDescription } from './mapApi';
 import { isInt, isNonEmptyString, isOneOf, isRecord, type Json } from './validate';
 
 export interface Cell {
@@ -20,17 +21,23 @@ export interface PlayerInfo extends Cell {
 export type ServerMessage =
   | { type: 'chunk'; chunk: Chunk }
   | { type: 'forget'; cx: number; cy: number }
-  | { type: 'welcome'; you: string; players: PlayerInfo[]; stepMs: number }
+  /** You're on a map: its description (ADR 0012), who you are, who you see. */
+  | { type: 'welcome'; you: string; players: PlayerInfo[]; stepMs: number; map: MapDescription }
   | { type: 'joined'; player: PlayerInfo }
   | { type: 'moved'; id: string; col: number; row: number }
   | { type: 'left'; id: string }
-  | { type: 'planned'; col: number; row: number; path: Cell[] }
+  /** The path to a cell, and what going there does (ADR 0012). */
+  | { type: 'planned'; col: number; row: number; path: Cell[]; action: CellAction }
   | { type: 'walking'; path: Cell[] }
   | { type: 'stopped'; col: number; row: number }
   /** You were teleported there, walkable or not (ADR 0010). */
   | { type: 'teleported'; col: number; row: number; walkable: boolean }
   /** A request wasn't done, and why, in words to show (ADR 0010). */
   | { type: 'refused'; request: string; reason: string };
+
+/** What a click on a cell does: move there, enter the dome there, or leave the city (ADR 0012). */
+export type CellAction = 'move' | 'enter' | 'exit';
+export const CELL_ACTIONS: readonly CellAction[] = ['move', 'enter', 'exit'];
 
 export interface Guest {
   id: string;
@@ -64,11 +71,21 @@ export function encodeTeleport(map: string, to: Cell): string {
   return JSON.stringify({ type: 'teleport', map, col: to.col, row: to.row });
 }
 
-/** The websocket address of a map, on the page's own host (Vite proxies it to the back in dev). */
-export function socketUrl(page: { protocol: string; host: string }, slug: string, guest: Guest): string {
+/** Asks the server to walk your player beside the dome on a cell, then into its city (ADR 0012). */
+export function encodeEnter(dome: Cell): string {
+  return JSON.stringify({ type: 'enter', col: dome.col, row: dome.row });
+}
+
+/** Asks the server to walk your player to their city's edge closest to a clicked cell, then out (ADR 0012). */
+export function encodeExit(clicked: Cell): string {
+  return JSON.stringify({ type: 'exit', col: clicked.col, row: clicked.row });
+}
+
+/** The game's websocket, on the page's own host (Vite proxies it to the back in dev): the server puts you on your map. */
+export function socketUrl(page: { protocol: string; host: string }, guest: Guest): string {
   const scheme = page.protocol === 'https:' ? 'wss' : 'ws';
   const query = new URLSearchParams({ player: guest.id, name: guest.name, robot: guest.robot });
-  return `${scheme}://${page.host}/api/maps/${encodeURIComponent(slug)}/ws?${query}`;
+  return `${scheme}://${page.host}/api/ws?${query}`;
 }
 
 function decodeByType(json: Record<string, unknown>): ServerMessage | null {
@@ -84,8 +101,8 @@ function decodeByType(json: Record<string, unknown>): ServerMessage | null {
     case 'left':
       return isNonEmptyString(json.id) ? { type: 'left', id: json.id } : null;
     case 'planned': {
-      const { path } = json;
-      return isCell(json) && isPath(path) ? { type: 'planned', col: json.col, row: json.row, path } : null;
+      const { path, action } = json;
+      return isCell(json) && isPath(path) && isOneOf(action, CELL_ACTIONS) ? { type: 'planned', col: json.col, row: json.row, path, action } : null;
     }
     case 'walking':
       return isPath(json.path) ? { type: 'walking', path: json.path } : null;
@@ -122,7 +139,7 @@ function decodeChunk(json: Json): ServerMessage | null {
     ground: ground.map((index) => kinds[index] as GroundKind),
     height,
     region,
-    objects: objects.map(({ id, kind, col, row }) => ({ id, kind, col, row })),
+    objects: objects.map(toMapObject),
   };
   return { type: 'chunk', chunk };
 }
@@ -136,18 +153,36 @@ function isCellList(value: unknown, min: number, max: number): value is number[]
   return Array.isArray(value) && value.length === CELLS_PER_CHUNK && value.every((n) => isInt(n) && n >= min && n <= max);
 }
 
+/** An object whose whole footprint is in its chunk. A dome leads to a map (ADR 0012). */
 function isObjectIn(value: unknown, key: ChunkKey): value is MapObject {
-  if (!isRecord(value) || !isNonEmptyString(value.id) || !isOneOf(value.kind, OBJECT_KINDS) || !isCell(value)) return false;
+  if (!isRecord(value)) return false;
+  const { id, kind, leadsTo } = value;
+  if (!isNonEmptyString(id) || !isOneOf(kind, OBJECT_KINDS) || !isCell(value)) return false;
+  if (kind === 'dome' && !isNonEmptyString(leadsTo)) return false;
   const origin = chunkOrigin(key);
-  const { col, row } = value;
-  return col >= origin.col && row >= origin.row && col < origin.col + CHUNK_SIZE && row < origin.row + CHUNK_SIZE;
+  const inChunk = ({ col, row }: Cell) => col >= origin.col && row >= origin.row && col < origin.col + CHUNK_SIZE && row < origin.row + CHUNK_SIZE;
+  return footprint({ kind, col: value.col, row: value.row }).every(inChunk);
+}
+
+function toMapObject({ id, kind, col, row, leadsTo }: MapObject): MapObject {
+  return kind === 'dome' ? { id, kind, col, row, leadsTo } : { id, kind, col, row };
 }
 
 function decodeWelcome(json: Record<string, unknown>): ServerMessage | null {
   const { you, players, stepMs } = json;
   if (!isNonEmptyString(you) || !Array.isArray(players) || !players.every(isPlayerInfo)) return null;
   if (!isInt(stepMs) || stepMs <= 0) return null;
-  return { type: 'welcome', you, players: players.map(toPlayerInfo), stepMs };
+  const map = descriptionOf(json.map);
+  return map && { type: 'welcome', you, players: players.map(toPlayerInfo), stepMs, map };
+}
+
+/** A welcome's map, null when it isn't a valid description. */
+function descriptionOf(json: unknown): MapDescription | null {
+  try {
+    return parseDescription(json);
+  } catch {
+    return null;
+  }
 }
 
 /** A player's id, name and cell are required; its robot is not. */

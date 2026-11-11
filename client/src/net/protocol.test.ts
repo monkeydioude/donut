@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decodeServerMessage, encodePlan, encodeTeleport, encodeWalk, socketUrl } from './protocol';
+import { cityDescription, worldDescription } from '../testing/maps';
+import { decodeServerMessage, encodeEnter, encodeExit, encodePlan, encodeTeleport, encodeWalk, socketUrl } from './protocol';
 
 const ann = { id: 'a', name: 'Ann', robot: 'dome-head', col: 1, row: 2 };
 
@@ -7,12 +8,15 @@ const ann = { id: 'a', name: 'Ann', robot: 'dome-head', col: 1, row: 2 };
 describe('decodeServerMessage', () => {
   it('decodes every server message', () => {
     const messages = [
-      { type: 'welcome', you: 'a', players: [ann], stepMs: 200 },
+      { type: 'welcome', you: 'a', players: [ann], stepMs: 200, map: worldDescription() },
+      { type: 'welcome', you: 'a', players: [ann], stepMs: 200, map: cityDescription() },
       { type: 'joined', player: ann },
       { type: 'moved', id: 'a', col: 3, row: 4 },
       { type: 'left', id: 'a' },
-      { type: 'planned', col: 3, row: 2, path: [{ col: 2, row: 2 }, { col: 3, row: 2 }] },
-      { type: 'planned', col: 3, row: 2, path: [] },
+      { type: 'planned', col: 3, row: 2, path: [{ col: 2, row: 2 }, { col: 3, row: 2 }], action: 'move' },
+      { type: 'planned', col: 3, row: 2, path: [], action: 'move' },
+      { type: 'planned', col: -3, row: 2, path: [{ col: 0, row: 2 }], action: 'exit' },
+      { type: 'planned', col: 3, row: 2, path: [{ col: 2, row: 2 }], action: 'enter' },
       { type: 'walking', path: [{ col: 2, row: 2 }] },
       { type: 'stopped', col: 1, row: 2 },
     ];
@@ -33,6 +37,10 @@ describe('decodeServerMessage', () => {
       '{"type": "welcome", "you": "a", "players": [], "stepMs": 0}',
       '{"type": "welcome", "you": "a", "players": [{"id": "b"}], "stepMs": 200}',
       '{"type": "planned", "col": 1, "row": 2}',
+      '{"type": "planned", "col": 1, "row": 2, "path": []}',
+      '{"type": "planned", "col": 1, "row": 2, "path": [], "action": "fly"}',
+      '{"type": "welcome", "you": "a", "players": [], "stepMs": 200}',
+      '{"type": "welcome", "you": "a", "players": [], "stepMs": 200, "map": {"slug": "x"}}',
       '{"type": "planned", "col": 1, "row": 2, "path": [{"col": 1}]}',
       '{"type": "walking", "path": null}',
       '{"type": "stopped"}',
@@ -97,6 +105,21 @@ describe('chunk messages', () => {
     expect(message.chunk.height[0]).toBe(6);
   });
 
+  // ADR 0012 test 23
+  it('decode a dome with the map it leads to, and a rock without', () => {
+    const chunk = serverChunk();
+    chunk.objects = [
+      { id: 'd1', kind: 'dome', col: 94, row: 62, leadsTo: 'doma-1' },
+      { id: 'r1', kind: 'rock', col: 70, row: 40, leadsTo: 'nowhere' },
+    ];
+    const message = decodeServerMessage(JSON.stringify(chunk));
+    if (message?.type !== 'chunk') throw new Error('not a chunk');
+    expect(message.chunk.objects).toEqual([
+      { id: 'd1', kind: 'dome', col: 94, row: 62, leadsTo: 'doma-1' },
+      { id: 'r1', kind: 'rock', col: 70, row: 40 },
+    ]);
+  });
+
   it('decode a forget', () => {
     expect(decodeServerMessage('{"type": "forget", "cx": 2, "cy": 1}')).toEqual({ type: 'forget', cx: 2, cy: 1 });
   });
@@ -112,6 +135,8 @@ describe('chunk messages', () => {
     'a height of -4 (ADR 0007)': (c) => ((c.height as number[])[0] = -4),
     'an object outside its chunk': (c) => (c.objects = [{ id: 'r1', kind: 'rock', col: 96, row: 40 }]),
     'an object of an unknown kind': (c) => (c.objects = [{ id: 't1', kind: 'tree', col: 70, row: 40 }]),
+    'a dome leading nowhere (ADR 0012)': (c) => (c.objects = [{ id: 'd1', kind: 'dome', col: 70, row: 40 }]),
+    'a dome whose footprint leaves its chunk (ADR 0012)': (c) => (c.objects = [{ id: 'd1', kind: 'dome', col: 95, row: 40, leadsTo: 'doma-1' }]),
     'a negative chunk': (c) => (c.cx = -1),
     'version 0': (c) => (c.version = 0),
   };
@@ -154,8 +179,9 @@ describe('a player\'s robot', () => {
   });
 
   it('is "" in a welcome too, and nothing else is kept from the player', () => {
-    const message = decodeServerMessage(JSON.stringify({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', col: 1, row: 2, extra: 1 }], stepMs: 200 }));
-    expect(message).toEqual({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 1, row: 2 }], stepMs: 200 });
+    const map = worldDescription();
+    const message = decodeServerMessage(JSON.stringify({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', col: 1, row: 2, extra: 1 }], stepMs: 200, map }));
+    expect(message).toEqual({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 1, row: 2 }], stepMs: 200, map });
   });
 });
 
@@ -163,11 +189,9 @@ describe('a player\'s robot', () => {
 describe('socketUrl', () => {
   const guest = { id: 'a-b', name: 'Guest 12&', robot: 'dome-head' };
 
-  it('opens the websocket on the page host, ws or wss like the page, with your robot', () => {
-    expect(socketUrl({ protocol: 'http:', host: 'localhost:5180' }, 'meadow', guest)).toBe(
-      'ws://localhost:5180/api/maps/meadow/ws?player=a-b&name=Guest+12%26&robot=dome-head',
-    );
-    expect(socketUrl({ protocol: 'https:', host: 'donut.example' }, 'meadow', guest)).toMatch(/^wss:\/\/donut\.example\//);
+  it("opens the game's websocket on the page host, ws or wss like the page, with your robot, and no map (ADR 0012)", () => {
+    expect(socketUrl({ protocol: 'http:', host: 'localhost:5180' }, guest)).toBe('ws://localhost:5180/api/ws?player=a-b&name=Guest+12%26&robot=dome-head');
+    expect(socketUrl({ protocol: 'https:', host: 'donut.example' }, guest)).toMatch(/^wss:\/\/donut\.example\//);
   });
 });
 
@@ -192,5 +216,13 @@ describe('teleport messages', () => {
     ]) {
       expect(decodeServerMessage(text), text).toBeNull();
     }
+  });
+});
+
+// ADR 0012 test 23
+describe('door messages', () => {
+  it('encode an enter on a cell and an exit by a click on a cell, past the map too', () => {
+    expect(JSON.parse(encodeEnter({ col: 1023, row: 511 }))).toEqual({ type: 'enter', col: 1023, row: 511 });
+    expect(JSON.parse(encodeExit({ col: -3, row: 40 }))).toEqual({ type: 'exit', col: -3, row: 40 });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { worldDescription } from '../testing/maps';
 import type { ServerMessage } from '../net/protocol';
-import { initialGameLog, logMessage, logMove, WALK_PAUSE_MS, type GameLogState, type LogLine } from './gameLog';
+import { initialGameLog, logMessage, logMove, WALK_PAUSE_MS, type GameLogState, type LogLine, logMapSwitch } from './gameLog';
 
 const bob = { id: 'b', name: 'Bob', robot: '', col: 3, row: 3 };
 const names: Record<string, string> = { a: 'Ann', b: 'Bob' };
@@ -55,8 +56,8 @@ describe('logMessage', () => {
 
   it('chunks, paths and the welcome are nothing', () => {
     const silent: ServerMessage[] = [
-      { type: 'welcome', you: 'a', players: [bob], stepMs: 200 },
-      { type: 'planned', col: 1, row: 1, path: [] },
+      { type: 'welcome', you: 'a', players: [bob], stepMs: 200, map: worldDescription() },
+      { type: 'planned', col: 1, row: 1, path: [], action: 'move' },
       { type: 'walking', path: [] },
       { type: 'forget', cx: 0, cy: 0 },
     ];
@@ -67,5 +68,15 @@ describe('logMessage', () => {
 describe('logMove', () => {
   it('says where you head', () => {
     expect(logMove({ col: 1040, row: 500 })).toEqual(log('You head to (1040, 500)'));
+  });
+});
+
+// ADR 0012 test 30
+describe('logMapSwitch', () => {
+  it('"You enter" a city, "You leave" it, nothing between maps that wrap', () => {
+    const city = { ...worldDescription(), slug: 'doma-1', name: 'Doma-1', width: 32, height: 32, wraps: false };
+    expect(logMapSwitch(worldDescription(), city)).toEqual([{ kind: 'log', text: 'You enter Doma-1' }]);
+    expect(logMapSwitch(city, worldDescription())).toEqual([{ kind: 'log', text: 'You leave Doma-1' }]);
+    expect(logMapSwitch(worldDescription(), { ...worldDescription(), slug: 'mars' })).toEqual([]);
   });
 });

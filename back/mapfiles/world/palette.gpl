@@ -9,6 +9,8 @@ Columns: 8
  79 159 216	ground.png: ocean
 138 134 148	ground.png: mountain
 223 244 251	ground.png: glacier
+217 210 195	ground.png: floor
+111 106 122	ground.png: wall
  30  58 138	height.png: height -3
  37  99 235	height.png: height -2
  56 189 248	height.png: height -1

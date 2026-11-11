@@ -20,7 +20,7 @@ import (
 	"donut/internal/worldmap/infra"
 )
 
-// smallTerrain is a wrapping 160 x 160 map with every kind of ground, heights, 3 regions and rocks.
+// smallTerrain is a wrapping 160 x 160 map with every kind of ground, heights, 3 regions, rocks and a dome.
 func smallTerrain() domain.Map {
 	opts := domain.GenerateOptions{
 		Slug: "small", Name: "Small", Width: 160, Height: 160, Wraps: true, RockChance: 0.1,
@@ -33,6 +33,7 @@ func smallTerrain() domain.Map {
 		Holes:     domain.HoleOptions{PerChunk: 1, Size: domain.Span{Min: 1, Max: 4}, FromWater: 3},
 		Mountains: domain.MountainOptions{Level: 2, MinSummit: 3, Reach: 6, FootLevel: 1, Clearance: 10, Spawn: core.Cell{Col: 79, Row: 79}},
 		Glaciers:  domain.GlacierOptions{Core: 10, Edge: 20, Pass: 12, Spawn: core.Cell{Col: 79, Row: 79}, RiseEvery: 4},
+		Dome:      domain.DomeOptions{LeadsTo: "city"},
 	}
 	return domain.Generate(opts, rand.New(rand.NewPCG(9, 9)))
 }
@@ -71,6 +72,15 @@ func hexAt(t *testing.T, folder fstest.MapFS, name string, x, y int) string {
 }
 
 // editManifest changes map.json as plain JSON.
+// hexAlphaAt is the color of a pixel of a PNG of the folder with its alpha, as "#rrggbbaa".
+func hexAlphaAt(t *testing.T, folder fstest.MapFS, name string, x, y int) string {
+	t.Helper()
+	img, err := png.Decode(bytes.NewReader(folder[name].Data))
+	require.NoError(t, err)
+	c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+	return fmt.Sprintf("#%02x%02x%02x%02x", c.R, c.G, c.B, c.A)
+}
+
 func editManifest(t *testing.T, folder fstest.MapFS, edit func(map[string]any)) {
 	t.Helper()
 	var man map[string]any
@@ -83,7 +93,7 @@ func editManifest(t *testing.T, folder fstest.MapFS, edit func(map[string]any)) 
 
 func gray(v uint8) color.NRGBA { return color.NRGBA{R: v, G: v, B: v, A: 0xff} }
 
-// ADR 0007 test 14
+// ADR 0007 test 14, and ADR 0012 test 8
 func TestMapFileReadsBackTheSame(t *testing.T) {
 	m := smallTerrain()
 	kinds := map[domain.TileKind]bool{}
@@ -99,7 +109,17 @@ func TestMapFileReadsBackTheSame(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, m.Description, read.Description, "name, size, wrapping and regions")
 	assert.Equal(t, m.Chunks, read.Chunks, "ground, heights and regions of every cell")
-	assert.Equal(t, m.Objects, read.Objects, "rocks, row by row")
+	assert.Equal(t, m.Objects, read.Objects, "rocks, row by row, then the dome")
+	require.Equal(t, domain.ObjectDome, m.Objects[len(m.Objects)-1].Kind, "a dome to read back")
+	var man struct{ Domes []map[string]any }
+	require.NoError(t, json.Unmarshal(folder["map.json"].Data, &man))
+	dome := m.Objects[len(m.Objects)-1]
+	assert.Equal(t, []map[string]any{{"col": float64(dome.Col), "row": float64(dome.Row), "map": "city"}}, man.Domes, "the dome is in map.json")
+	assert.Equal(t, "#00000000", hexAlphaAt(t, folder, "objects.png", dome.Col, dome.Row), "not painted in objects.png")
+	assert.Contains(t, string(folder["README.md"].Data), "and the domes")
+	assert.Contains(t, string(folder["README.md"].Data), "`#d9d2c3` | floor", "ADR 0012 test 9")
+	assert.Contains(t, string(folder["README.md"].Data), "`#6f6a7a` | wall", "ADR 0012 test 9")
+	assert.Contains(t, string(folder["palette.gpl"].Data), "ground.png: floor", "ADR 0012 test 9")
 
 	for _, name := range []string{"map.json", "ground.png", "height.png", "regions.png", "objects.png", "README.md", "palette.gpl"} {
 		assert.Contains(t, folder, name)
@@ -166,6 +186,9 @@ func TestMapFileRefuses(t *testing.T) {
 			paint(t, f, "ground.png", 3, 4, domain.WaterBlue)
 			paint(t, f, "objects.png", 3, 4, domain.RockGray)
 		}, "objects.png (3, 4): a rock on water"},
+		"a dome leading nowhere (ADR 0012)": {func(t *testing.T, f fstest.MapFS) {
+			editManifest(t, f, func(m map[string]any) { m["domes"].([]any)[0].(map[string]any)["map"] = "" })
+		}, "leads nowhere"},
 		"a map too big": {func(t *testing.T, f fstest.MapFS) {
 			editManifest(t, f, func(m map[string]any) { m["width"] = 1 << 30 })
 		},
@@ -199,4 +222,22 @@ func TestTheGeneratedWorldPassesTheMapFileChecks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, world.Chunks, read.Chunks)
 	assert.Len(t, read.Objects, len(world.Objects))
+}
+
+// ADR 0012 test 8
+func TestCheckDomes(t *testing.T) {
+	m := smallTerrain()
+	maps := fstest.MapFS{"city/map.json": &fstest.MapFile{Data: []byte("{}")}}
+	assert.NoError(t, infra.CheckDomes(m, maps))
+	assert.ErrorContains(t, infra.CheckDomes(m, fstest.MapFS{}), `leads to "city", which has no map folder`)
+}
+
+// ADR 0012 test 9: a city's floors and walls read back
+func TestACityReadsBackTheSame(t *testing.T) {
+	m := domain.GenerateCity(domain.Doma1())
+	read, err := infra.DecodeMapFile(encoded(t, m))
+	require.NoError(t, err)
+	assert.Equal(t, m.Description, read.Description)
+	assert.Equal(t, m.Chunks, read.Chunks)
+	assert.Equal(t, "#d9d2c3", hexAt(t, encoded(t, m), "ground.png", 5, 16), "floor")
 }

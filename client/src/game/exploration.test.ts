@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { explore, exploredShare, exploredText, isExplored, noExploration } from './exploration';
+import { createExplorations, explore, exploredShare, exploredText, isExplored, noExploration } from './exploration';
 
 const world = { width: 1024, height: 512, wraps: true };
 
@@ -33,5 +33,18 @@ describe('the explored share', () => {
   it('none is 0.0%, all are 100.0%', () => {
     expect(exploredText(exploredShare(noExploration, world))).toBe('0.0% explored');
     expect(exploredText(exploredShare(chunks(512), world))).toBe('100.0% explored');
+  });
+});
+
+// ADR 0012 test 31
+describe('explorations, per map', () => {
+  it('going back to a map finds its explored chunks; other maps are apart', () => {
+    const explorations = createExplorations();
+    explorations.explore('world', { cx: 3, cy: 4 });
+    explorations.explore('doma-1', { cx: 0, cy: 0 });
+    expect(isExplored(explorations.of('world'), { cx: 3, cy: 4 })).toBe(true);
+    expect(isExplored(explorations.of('world'), { cx: 0, cy: 0 })).toBe(false);
+    expect(isExplored(explorations.of('doma-1'), { cx: 0, cy: 0 })).toBe(true);
+    expect(explorations.of('mars').size).toBe(0);
   });
 });

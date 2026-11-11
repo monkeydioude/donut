@@ -96,6 +96,9 @@
        * The chatbox (ADR 0010): a bar at the bottom, 6 lines of history over the input, cream text on the notice's
        * dark purple, half transparent. Your lines are dimmer, warnings gold, errors pink.
        */
+      /* The screen going dark between maps (ADR 0012): black over the game, under the HUD, dark until the first map is drawn. */
+      .fade { position: fixed; inset: 0; background: #000; opacity: 1; pointer-events: none; transition-property: opacity; z-index: 4; }
+      .fade.fade-clear { opacity: 0; }
       .chatbox {
         width: min(560px, calc(100vw - 24px)); pointer-events: auto;
         display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 6px;

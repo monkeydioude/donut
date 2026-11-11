@@ -1,6 +1,7 @@
 import { Container } from 'pixi.js';
 import { groundCenterAt, type Heights } from '../iso/heights';
 import type { TilePoint } from '../iso/projection';
+import { objectPlacement, type ObjectKind } from '../map/worldMap';
 
 export interface WorldView {
   /** The water, the ground over it, the overlay on the ground, the entities above. */
@@ -30,6 +31,16 @@ export function createWorldView(): WorldView {
 export function placeOnCell(sprite: Container, cell: TilePoint, heights: Heights, height: number): void {
   positionOnCell(sprite, cell, heights, height);
   sprite.zIndex = heights.projection.depth(cell);
+}
+
+/**
+ * Puts an object's sprite on its footprint at its height, its back cell being drawn at `back`: a rock on its cell, a
+ * dome on the middle of its 2 × 2, sorted by its front cell (ADR 0012).
+ */
+export function placeObject(sprite: Container, kind: ObjectKind, back: TilePoint, heights: Heights, height: number): void {
+  const { at, sortedBy } = objectPlacement(kind, back);
+  positionOnCell(sprite, at, heights, height);
+  sprite.zIndex = heights.projection.depth(sortedBy);
 }
 
 /** Puts a sprite on a cell at its height, without touching the draw order: Pixi sorts a layer once a child has a zIndex. */

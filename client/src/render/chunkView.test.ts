@@ -3,7 +3,8 @@ import { createIsoProjection } from '../iso/projection';
 import type { CellTerrain, Chunk } from '../map/chunks';
 import type { GroundKind } from '../map/worldMap';
 import type { Grid } from '../map/grid';
-import { chunksToDraw, drawnChunkOrigin, faceLevels, faceMaterial, layoutChunk, waterFrame, type TerrainAround } from './chunkView';
+import { chunksToDraw, drawnChunkOrigin, faceLevels, faceMaterial, layoutChunk, pickObject, waterFrame, type DrawnObject, type TerrainAround } from './chunkView';
+import type { ObjectGraphic } from './tileGraphics';
 
 const projection = createIsoProjection(64, 32);
 const heights = { projection, levelPx: 16 };
@@ -36,6 +37,7 @@ describe('layoutChunk', () => {
     expect(tiles.find((t) => t.cell.col === 65 && t.cell.row === 32)).toEqual({
       kind: 'grass',
       cell: { col: 65, row: 32 },
+      height: 0,
       local: { x: 32, y: 16 },
       depth: 1,
       faces: [],
@@ -307,5 +309,29 @@ describe('mountain and glacier blocks', () => {
 
   it('other kinds have none', () => {
     expect(tileAt(chunkOf(), 5, 5)?.block).toBeNull();
+  });
+});
+
+// ADR 0012 test 28
+describe('picking a dome by its pixels', () => {
+  /** A 10 × 10 sprite whose pivot is its bottom middle, opaque on its upper half only. */
+  const graphic: ObjectGraphic = {
+    texture: undefined as never,
+    pivot: { x: 5, y: 10 },
+    opaqueAt: (x, y) => x >= 0 && x < 10 && y >= 0 && y < 5,
+  };
+  const dome = (x: number, zIndex: number, col: number): DrawnObject => ({ position: { x, y: 100 }, zIndex, graphic, cell: { col, row: 7 } });
+
+  it('the pointer over its opaque pixels picks its cell', () => {
+    expect(pickObject([dome(50, 1, 4)], { x: 50, y: 92 })).toEqual({ col: 4, row: 7 });
+  });
+
+  it('over a transparent pixel, or off the sprite, nothing: the ground behind is picked', () => {
+    expect(pickObject([dome(50, 1, 4)], { x: 50, y: 97 })).toBeNull();
+    expect(pickObject([dome(50, 1, 4)], { x: 70, y: 92 })).toBeNull();
+  });
+
+  it('the frontmost of two overlapping domes wins', () => {
+    expect(pickObject([dome(50, 3, 4), dome(52, 5, 9)], { x: 51, y: 92 })).toEqual({ col: 9, row: 7 });
   });
 });

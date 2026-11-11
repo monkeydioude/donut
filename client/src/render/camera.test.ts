@@ -32,9 +32,15 @@ describe('cellAt', () => {
     expect(cellAt({ x: 464, y: 196 }, world, heights, flat, bounded)).toEqual({ col: 2, row: 1 });
   });
 
-  it('gives null outside a bounded map', () => {
-    expect(cellAt({ x: 400, y: 60 }, world, heights, flat, bounded)).toBeNull();
-    expect(cellAt({ x: 400, y: 100 + 8 * 32 * 2 }, world, heights, flat, bounded)).toBeNull();
+  // ADR 0012: a click there leaves a city
+  it('gives the cell past the edge of a bounded map', () => {
+    expect(cellAt({ x: 400, y: 60 }, world, heights, flat, bounded)).toEqual({ col: -1, row: -1 });
+    expect(cellAt({ x: 400, y: 100 + 8 * 32 * 2 }, world, heights, flat, bounded)).toEqual({ col: 8, row: 8 });
+  });
+
+  it('gives the dome drawn there first (ADR 0012)', () => {
+    const dome = () => ({ col: 3, row: 3 });
+    expect(cellAt({ x: 464, y: 196 }, world, heights, flat, bounded, dome)).toEqual({ col: 3, row: 3 });
   });
 
   it('gives the cell within the map for a drawn copy past the seam', () => {

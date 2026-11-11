@@ -1,9 +1,9 @@
-// Package wstransport is the presence module's websocket: GET /api/maps/{slug}/ws?player={uuid}&name={name}&robot={slug}.
+// Package wstransport is the presence module's websocket: GET /api/ws?player={uuid}&name={name}&robot={slug}. One
+// socket for the game: the server puts the player on their map, and moves them from map to map (ADR 0012).
 package wstransport
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,7 +12,6 @@ import (
 
 	"donut/internal/presence/app"
 	"donut/internal/presence/domain"
-	"donut/pkg/errd"
 )
 
 const (
@@ -22,27 +21,26 @@ const (
 	loggedBytes = 200
 )
 
-// Rooms finds the room of a map.
-type Rooms interface {
-	Room(ctx context.Context, slug string) (*app.Room, error)
+// Hub connects a player to the map they're on.
+type Hub interface {
+	Connect(ctx context.Context, who domain.Profile, client app.Client) (*app.Session, error)
 }
 
 type Handler struct {
-	rooms Rooms
+	hub Hub
 	// originPatterns are the hosts browsers may open the websocket from, besides the API's own.
 	originPatterns []string
 	log            *slog.Logger
 }
 
-func NewHandler(rooms Rooms, originPatterns []string, log *slog.Logger) *Handler {
-	return &Handler{rooms: rooms, originPatterns: originPatterns, log: log.With("component", "ws")}
+func NewHandler(hub Hub, originPatterns []string, log *slog.Logger) *Handler {
+	return &Handler{hub: hub, originPatterns: originPatterns, log: log.With("component", "ws")}
 }
 
-// ServeHTTP checks the player and the map before upgrading, then passes their requests to the room until they leave.
-// The logs name players by their public id: the guest id is a secret.
+// ServeHTTP checks the player before upgrading, then puts them on their map and passes their requests on until they
+// leave. The logs name players by their public id: the guest id is a secret.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	log := h.log.With("map", slug, "remote", r.RemoteAddr)
+	log := h.log.With("remote", r.RemoteAddr)
 	log.DebugContext(r.Context(), "ws connecting", "origin", r.Header.Get("Origin"))
 	who, err := playerFrom(r)
 	if err != nil {
@@ -50,13 +48,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	id := who.ID
-	log = log.With("player", id)
-	room, err := h.rooms.Room(r.Context(), slug)
-	if err != nil {
-		writeRoomError(w, r, log, err)
-		return
-	}
+	log = log.With("player", who.ID)
 	// Chunks are big and repetitive: messages over 512 bytes are compressed, each on its own (ADR 0003).
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.originPatterns, CompressionMode: websocket.CompressionNoContextTakeover})
 	if err != nil {
@@ -67,13 +59,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(maxMessageBytes)
 	c := newClient(conn, log)
 	defer c.Close()
-	if err := room.Join(who, c); err != nil {
+	session, err := h.hub.Connect(r.Context(), who, c)
+	if err != nil {
 		log.ErrorContext(r.Context(), "ws join failed", "error", err)
 		return
 	}
-	defer room.Leave(id, c)
+	defer session.Leave()
 	start := time.Now()
-	reason := readRequests(r.Context(), conn, room, id, c, log)
+	reason := readRequests(r.Context(), conn, session, log)
 	log.DebugContext(r.Context(), "ws closed", "close_status", websocket.CloseStatus(reason), "reason", reason, "lasted", time.Since(start))
 }
 
@@ -95,19 +88,9 @@ func playerFrom(r *http.Request) (domain.Profile, error) {
 	return domain.Profile{ID: domain.PublicID(guestID), Name: name, Robot: robot}, nil
 }
 
-func writeRoomError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
-	if errors.Is(err, errd.ErrNotFound) {
-		log.DebugContext(r.Context(), "ws refused: unknown map", "status", http.StatusNotFound)
-		http.Error(w, "map not found", http.StatusNotFound)
-		return
-	}
-	log.ErrorContext(r.Context(), "ws refused: room", "status", http.StatusInternalServerError, "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
-}
-
-// readRequests passes every plan, walk and teleport the client sends to the room, until the connection ends,
-// and gives why it ended. Other messages are ignored.
-func readRequests(ctx context.Context, conn *websocket.Conn, room *app.Room, id string, c app.Client, log *slog.Logger) error {
+// readRequests passes every request the client sends to their session, until the connection ends, and gives why it
+// ended. Other messages are ignored.
+func readRequests(ctx context.Context, conn *websocket.Conn, session *app.Session, log *slog.Logger) error {
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
@@ -115,17 +98,21 @@ func readRequests(ctx context.Context, conn *websocket.Conn, room *app.Room, id 
 		}
 		req, ok := decodeRequest(data)
 		if !ok {
-			log.DebugContext(ctx, "ws message ignored: not a plan, walk or teleport", "bytes", len(data), "message", string(data[:min(len(data), loggedBytes)]))
+			log.DebugContext(ctx, "ws message ignored: not a plan, walk, teleport, enter or exit", "bytes", len(data), "message", string(data[:min(len(data), loggedBytes)]))
 			continue
 		}
 		log.DebugContext(ctx, "ws receive", "request", req.kind, "to", req.to, "bytes", len(data))
 		switch req.kind {
 		case "plan":
-			room.Plan(id, c, req.to)
+			session.Plan(req.to)
 		case "walk":
-			room.Walk(id, c, req.to)
+			session.Walk(req.to)
 		case "teleport":
-			room.Teleport(id, c, req.toMap, req.to)
+			session.Teleport(ctx, req.toMap, req.to)
+		case "enter":
+			session.Enter(ctx, req.to)
+		case "exit":
+			session.Exit(ctx, req.to)
 		}
 	}
 }

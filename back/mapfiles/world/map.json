@@ -114,5 +114,12 @@
       "biome": "meadow",
       "color": "#129977"
     }
+  ],
+  "domes": [
+    {
+      "col": 1022,
+      "row": 510,
+      "map": "doma-1"
+    }
   ]
 }

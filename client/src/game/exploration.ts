@@ -29,3 +29,15 @@ export function exploredShare(explored: Exploration, grid: Grid): number {
 export function exploredText(share: number): string {
   return `${(share * 100).toFixed(1)}% explored`;
 }
+
+/** What each map was explored, for the session (ADR 0012): going back to a map finds its explored chunks. */
+export interface Explorations {
+  of(map: string): Exploration;
+  explore(map: string, key: ChunkKey): void;
+}
+
+export function createExplorations(): Explorations {
+  const byMap = new Map<string, Exploration>();
+  const of = (map: string) => byMap.get(map) ?? noExploration;
+  return { of, explore: (map, key) => void byMap.set(map, explore(of(map), key)) };
+}

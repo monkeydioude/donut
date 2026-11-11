@@ -35,7 +35,7 @@ func TestChunkFormat(t *testing.T) {
 		"a wrong length":         func(data []byte) []byte { return data[:3072] },
 		"no data":                func([]byte) []byte { return nil },
 		"an unknown format":      func(data []byte) []byte { data[0] = 2; return data },
-		"an unknown ground code": func(data []byte) []byte { data[1+10] = 9; return data },
+		"an unknown ground code": func(data []byte) []byte { data[1+10] = 10; return data },
 	}
 	for name, breakIt := range broken {
 		t.Run("refuses "+name, func(t *testing.T) {

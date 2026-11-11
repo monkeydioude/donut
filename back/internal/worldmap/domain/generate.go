@@ -30,6 +30,8 @@ type GenerateOptions struct {
 	Holes      HoleOptions
 	Mountains  MountainOptions
 	Glaciers   GlacierOptions
+	// Dome places a dome city on the spawn (ADR 0012).
+	Dome DomeOptions
 }
 
 // Span is a whole number from Min to Max, both included.
@@ -54,7 +56,7 @@ func starterRegionNames() []string {
 // StarterWorld is the world the starter map file is generated from: the surface of the donut, 2048 cells around the
 // ring and 1024 around the tube, wrapping both ways (ADR 0003): three continents and six islands in an ocean, with
 // hills, lakes, rivers and holes (ADR 0007, ADR 0008), massifs around the summits and the glacier ring at the inner
-// ridge (ADR 0011).
+// ridge (ADR 0011), and Doma-1's dome on the spawn (ADR 0012).
 func StarterWorld() GenerateOptions {
 	const width, height = 2048, 1024
 	// the spawn is the walkable cell closest to the center: the first continent is centered on it, and a river
@@ -65,12 +67,13 @@ func StarterWorld() GenerateOptions {
 		RockChance: 0.12, RegionNames: starterRegionNames(),
 		Relief: starterRelief(), Landmasses: starterLandmasses(), Water: starterWater(center), Holes: starterHoles(),
 		Mountains: starterMountains(center), Glaciers: starterGlaciers(center),
+		Dome: DomeOptions{LeadsTo: "doma-1"},
 	}
 }
 
 // Generate makes a map from its options. The same rng sequence gives the same map: the landmasses are shaped first,
-// then the relief, the lakes, the rivers, the bridges, the holes, the massifs, the glacier ring, each cell's rock,
-// row by row, and the regions.
+// then the relief, the lakes, the rivers, the dome, the bridges, the holes, the massifs, the glacier ring, each cell's
+// rock, row by row, and the regions. The dome draws nothing from the rng.
 func Generate(opts GenerateOptions, rng Rng) Map {
 	summary := Summary{Slug: opts.Slug, Name: opts.Name, Width: opts.Width, Height: opts.Height, Wraps: opts.Wraps}
 	m := NewMap(summary, TileGrass)
@@ -80,6 +83,7 @@ func Generate(opts GenerateOptions, rng Rng) Map {
 	ground.raise(opts.Relief, ground.inlandRise(opts.Landmasses), rng)
 	lakes := ground.digLakes(opts.Water, masses, rng)
 	rivers := ground.runRivers(opts.Water, lakes, rng)
+	dome, hasDome := ground.placeDome(opts.Dome)
 	ground.settleBanks()
 	ground.buildBridges(rivers, opts.Water.Bridges)
 	ground.digHoles(opts.Holes, rng)
@@ -87,6 +91,9 @@ func Generate(opts GenerateOptions, rng Rng) Map {
 	ground.freezeRidge(opts.Glaciers, rng)
 	ground.writeInto(m)
 	m.Objects = scatterRocks(ground, opts.RockChance, rng)
+	if hasDome {
+		m.Objects = append(m.Objects, dome)
+	}
 	ground.cutIntoRegions(&m, masses, opts.Landmasses, opts.RegionNames, center, rng)
 	return m
 }

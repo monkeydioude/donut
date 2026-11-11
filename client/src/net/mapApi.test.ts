@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchDescription, parseDescription } from './mapApi';
+import { parseDescription } from './mapApi';
 
 const serverDescription = () => ({
   id: 'm1',
@@ -23,7 +23,17 @@ describe('parseDescription', () => {
       wraps: true,
       chunkSize: 32,
       regions: [{ id: 1, name: 'Sprinkle Meadow', biome: 'meadow' }],
+      standsOn: null,
     });
+  });
+
+  // ADR 0012 test 24
+  it("reads a city's size, and where it stands", () => {
+    const standsOn = { map: 'world', col: 1022, row: 510, width: 2048, height: 1024 };
+    const city = parseDescription({ ...serverDescription(), slug: 'doma-1', width: 32, height: 48, wraps: false, standsOn });
+    expect(city.width).toBe(32);
+    expect(city.height).toBe(48);
+    expect(city.standsOn).toEqual(standsOn);
   });
 
   const broken: Record<string, (json: ReturnType<typeof serverDescription>) => unknown> = {
@@ -31,6 +41,11 @@ describe('parseDescription', () => {
     'no slug': (json) => ({ ...json, slug: '' }),
     'a size of 0': (json) => ({ ...json, width: 0 }),
     'a size not a multiple of 32': (json) => ({ ...json, height: 100 }),
+    'a wrapping size of 48 (ADR 0012)': (json) => ({ ...json, height: 48 }),
+    'a bounded size of 24 (ADR 0012)': (json) => ({ ...json, wraps: false, width: 24 }),
+    'a bounded size of 0 (ADR 0012)': (json) => ({ ...json, wraps: false, width: 0 }),
+    'a standsOn without a map (ADR 0012)': (json) => ({ ...json, standsOn: { col: 1, row: 1, width: 2048, height: 1024 } }),
+    'a standsOn outside its map (ADR 0012)': (json) => ({ ...json, standsOn: { map: 'world', col: 2048, row: 1, width: 2048, height: 1024 } }),
     'a size over 4096': (json) => ({ ...json, width: 4128 }),
     'no wraps': (json) => ({ ...json, wraps: undefined }),
     'another chunk size': (json) => ({ ...json, chunkSize: 16 }),
@@ -43,20 +58,4 @@ describe('parseDescription', () => {
       expect(() => parseDescription(breakIt(serverDescription()))).toThrow(/invalid map description/);
     });
   }
-});
-
-describe('fetchDescription', () => {
-  it('reads the description of a slug', async () => {
-    const urls: string[] = [];
-    const map = await fetchDescription('world', async (url) => {
-      urls.push(url);
-      return new Response(JSON.stringify(serverDescription()));
-    });
-    expect(urls).toEqual(['/api/maps/world']);
-    expect(map.regions).toHaveLength(1);
-  });
-
-  it('fails when the server does', async () => {
-    await expect(fetchDescription('nowhere', async () => new Response('not found', { status: 404 }))).rejects.toThrow(/404/);
-  });
 });

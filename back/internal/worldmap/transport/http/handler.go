@@ -57,11 +57,22 @@ type RegionOut struct {
 	Biome string `json:"biome"`
 }
 
-// DescriptionOut is a map without its cells: these come over the websocket, chunk by chunk (ADR 0003).
+// DescriptionOut is a map without its cells: these come over the websocket, chunk by chunk (ADR 0003). A city tells
+// where it stands, null otherwise (ADR 0012).
 type DescriptionOut struct {
 	SummaryOut
 	ChunkSize int         `json:"chunkSize"`
 	Regions   []RegionOut `json:"regions"`
+	StandsOn  *PlaceOut   `json:"standsOn"`
+}
+
+// PlaceOut is a city's dome, on another map, with that map's size.
+type PlaceOut struct {
+	Map    string `json:"map"`
+	Col    int    `json:"col"`
+	Row    int    `json:"row"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 func (h *Handler) ListMaps(req *handler.Request[handler.None]) response.Response {
@@ -119,5 +130,9 @@ func toDescriptionOut(d domain.Description) DescriptionOut {
 	regions := dt.SliceTransform(d.Regions, func(r domain.Region) RegionOut {
 		return RegionOut{ID: r.ID, Name: r.Name, Biome: string(r.Biome)}
 	})
-	return DescriptionOut{SummaryOut: toSummaryOut(d.Summary), ChunkSize: core.ChunkSize, Regions: regions}
+	out := DescriptionOut{SummaryOut: toSummaryOut(d.Summary), ChunkSize: core.ChunkSize, Regions: regions}
+	if p := d.StandsOn; p != nil {
+		out.StandsOn = &PlaceOut{Map: p.Map, Col: p.Col, Row: p.Row, Width: p.Width, Height: p.Height}
+	}
+	return out
 }

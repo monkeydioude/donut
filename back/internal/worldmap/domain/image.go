@@ -8,11 +8,16 @@ import (
 	core "donut/internal/core/domain"
 )
 
-// The map image's colors (ADR 0005, ADR 0007, ADR 0009, ADR 0011), from the client's art: its grass green, a shade of
-// it per region, its rocks' light gray, and the terrain's colors. The map file paints its ground with these too.
+// The map image's colors (ADR 0005, ADR 0007, ADR 0009, ADR 0011, ADR 0012), from the client's art: its grass green, a
+// shade of it per region, its rocks' light gray, the terrain's colors, and gold for domes, so a city is easy to find.
+// The map file paints its ground with these too.
 var (
-	GrassGreen   = color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0xff}
-	RockGray     = color.NRGBA{R: 0xd2, G: 0xce, B: 0xc5, A: 0xff}
+	GrassGreen = color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0xff}
+	RockGray   = color.NRGBA{R: 0xd2, G: 0xce, B: 0xc5, A: 0xff}
+	DomeGold   = color.NRGBA{R: 0xf2, G: 0xc1, B: 0x4e, A: 0xff}
+	// FloorPaving and WallMetal are a city's paving and its dome's rim (ADR 0012).
+	FloorPaving  = color.NRGBA{R: 0xd9, G: 0xd2, B: 0xc3, A: 0xff}
+	WallMetal    = color.NRGBA{R: 0x6f, G: 0x6a, B: 0x7a, A: 0xff}
 	WaterBlue    = color.NRGBA{R: 0x6f, G: 0xb7, B: 0xe0, A: 0xff}
 	OceanBlue    = color.NRGBA{R: 0x4f, G: 0x9f, B: 0xd8, A: 0xff}
 	HoleDark     = color.NRGBA{R: 0x2b, G: 0x25, B: 0x40, A: 0xff}
@@ -50,8 +55,8 @@ const (
 const allLevels = MaxHeight - MinHeight + 1
 
 // imagePalette holds every color of a map's image, so it's a small paletted PNG: transparent, then each shade group's
-// grass, plain then on a border, at each level of the terrain, then water, the ocean, holes, bridges and rocks, then
-// mountains and glaciers at each level. That's 208 colors.
+// grass, plain then on a border, at each level of the terrain, then water, the ocean, holes, bridges, rocks and domes,
+// floors and walls, then mountains and glaciers at each level. That's 211 colors.
 var imagePalette = func() color.Palette {
 	palette := color.Palette{color.NRGBA{}}
 	for _, shade := range append([]color.NRGBA{GrassGreen}, RegionShades[:]...) {
@@ -59,7 +64,7 @@ var imagePalette = func() color.Palette {
 			palette = append(palette, shadesOf(plain, MaxGroundHeight)...)
 		}
 	}
-	palette = append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, RockGray)
+	palette = append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, RockGray, DomeGold, FloorPaving, WallMetal)
 	palette = append(palette, shadesOf(MountainGray, MaxHeight)...)
 	return append(palette, shadesOf(GlacierShade, MaxHeight)...)
 }()
@@ -76,18 +81,21 @@ func shadesOf(c color.NRGBA, top int8) []color.Color {
 const transparentIndex = 0
 
 var (
-	waterIndex    = uint8(len(imagePalette) - 2*allLevels - 5)
+	waterIndex    = uint8(len(imagePalette) - 2*allLevels - 8)
 	oceanIndex    = waterIndex + 1
 	holeIndex     = waterIndex + 2
 	bridgeIndex   = waterIndex + 3
 	rockIndex     = waterIndex + 4
-	mountainIndex = waterIndex + 5
+	domeIndex     = waterIndex + 5
+	floorIndex    = waterIndex + 6
+	wallIndex     = waterIndex + 7
+	mountainIndex = waterIndex + 8
 	glacierIndex  = mountainIndex + allLevels
 )
 
 // Image is the whole map, 1 pixel per cell: grass in its region's shade, darker on region borders, lighter or darker
-// with its height, and mountains and glaciers too; water, the ocean, holes and bridges in their colors; rocks over
-// them, and `void` transparent. Cells of a chunk with no row are `void`.
+// with its height, and mountains and glaciers too; water, the ocean, holes and bridges in their colors; rocks and
+// domes over them, and `void` transparent. Cells of a chunk with no row are `void`.
 func Image(m Map) *image.Paletted {
 	grid := m.Grid()
 	img := image.NewPaletted(image.Rect(0, 0, m.Width, m.Height), imagePalette)
@@ -97,11 +105,18 @@ func Image(m Map) *image.Paletted {
 		}
 	}
 	for _, o := range m.Objects {
-		if o.Kind == ObjectRock {
-			img.SetColorIndex(o.Col, o.Row, rockIndex)
+		for _, cell := range o.Footprint() {
+			img.SetColorIndex(cell.Col, cell.Row, objectIndex(o.Kind))
 		}
 	}
 	return img
+}
+
+func objectIndex(kind ObjectKind) uint8 {
+	if kind == ObjectDome {
+		return domeIndex
+	}
+	return rockIndex
 }
 
 // cellIndex is a cell's color in the palette.
@@ -118,6 +133,10 @@ func cellIndex(m Map, grid core.Grid, cell core.Cell) uint8 {
 		return holeIndex
 	case TileBridge:
 		return bridgeIndex
+	case TileFloor:
+		return floorIndex
+	case TileWall:
+		return wallIndex
 	case TileMountain:
 		return mountainIndex + levelIndex(m.HeightAt(cell))
 	case TileGlacier:

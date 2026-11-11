@@ -16,15 +16,15 @@ type Module struct {
 	Handler *wstransport.Handler
 }
 
-// NewModule takes the context the rooms tick in, how to load a map for its room, the clock,
+// NewModule takes the context the rooms tick in, how to load a map for its room, the clock, the map new guests join,
 // the origins allowed to open the websocket, and the logger.
-func NewModule(ctx context.Context, load app.LoadWorld, now func() time.Time, originPatterns []string, log *slog.Logger) *Module {
-	hub := app.NewHub(ctx, load, now, log)
+func NewModule(ctx context.Context, load app.LoadWorld, now func() time.Time, home string, originPatterns []string, log *slog.Logger) *Module {
+	hub := app.NewHub(ctx, load, now, home, log)
 	return &Module{Hub: hub, Handler: wstransport.NewHandler(hub, originPatterns, log)}
 }
 
-// Routes registers the websocket on a plain mux: the API router wraps the ResponseWriter,
-// which then cannot be taken over by the websocket upgrade.
+// Routes registers the game's websocket on a plain mux: the API router wraps the ResponseWriter, which then cannot be
+// taken over by the websocket upgrade. One socket, whatever the map (ADR 0012).
 func (m *Module) Routes(mux *http.ServeMux) {
-	mux.Handle("GET /api/maps/{slug}/ws", m.Handler)
+	mux.Handle("GET /api/ws", m.Handler)
 }

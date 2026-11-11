@@ -37,12 +37,23 @@ func (c *Chunk) cellAt(i int) core.Cell {
 	return core.Cell{Col: origin.Col + i%core.ChunkSize, Row: origin.Row + i/core.ChunkSize}
 }
 
-func (c *Chunk) validate(regions map[uint8]bool) error {
+// voidOutside makes the cells past a bounded map's edges void: an edge chunk is partly outside (ADR 0012).
+func (c *Chunk) voidOutside(grid core.Grid) {
+	for i := range c.Ground {
+		if !grid.Contains(c.cellAt(i)) {
+			c.Ground[i] = TileVoid
+		}
+	}
+}
+
+func (c *Chunk) validate(grid core.Grid, regions map[uint8]bool) error {
 	if c.Version < 1 {
 		return invalid("chunk %v: version %d, expected 1 or more", c.Key, c.Version)
 	}
 	for i := range c.Ground {
 		switch {
+		case !grid.Contains(c.cellAt(i)) && c.Ground[i] != TileVoid:
+			return invalid("chunk %v, cell %v: past the map's edge, it must be void", c.Key, c.cellAt(i))
 		case !c.Ground[i].Known():
 			return invalid("chunk %v, cell %v: unknown ground code %d", c.Key, c.cellAt(i), c.Ground[i])
 		case c.Height[i] < MinHeight || c.Height[i] > MaxHeight:
@@ -78,7 +89,7 @@ func (c *Chunk) contents(objects []Object) *core.ChunkContents {
 		out.Ground[i] = index
 	}
 	for i, object := range objects {
-		out.Objects[i] = core.PlacedObject{ID: object.ID, Kind: string(object.Kind), Cell: object.Cell()}
+		out.Objects[i] = core.PlacedObject{ID: object.ID, Kind: string(object.Kind), Cell: object.Cell(), LeadsTo: object.LeadsTo}
 	}
 	return out
 }
