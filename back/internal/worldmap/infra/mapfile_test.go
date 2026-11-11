@@ -29,7 +29,9 @@ func smallTerrain() domain.Map {
 		Water: domain.WaterOptions{RiversPerContinent: domain.Span{Min: 2, Max: 2}, LakesPerContinent: domain.Span{Min: 1, Max: 1}, LakeSize: domain.Span{Min: 4, Max: 8},
 			LakeFromOcean: 10, LakeFromWater: 6, Wobble: 0.125, RiverTries: 5, Spawn: domain.SpawnRiver{Near: core.Cell{Col: 79, Row: 79}, West: domain.Span{Min: 20, Max: 25}, Above: domain.Span{Min: 8, Max: 10}, Wobble: 3},
 			Bridges: domain.BridgeOptions{Every: 20, MaxSpan: 3}},
-		Holes: domain.HoleOptions{PerChunk: 1, Size: domain.Span{Min: 1, Max: 4}, FromWater: 3},
+		Holes:     domain.HoleOptions{PerChunk: 1, Size: domain.Span{Min: 1, Max: 4}, FromWater: 3},
+		Mountains: domain.MountainOptions{Level: 2, MinSummit: 3, Cover: 0.6, Size: domain.Span{Min: 2, Max: 6}},
+		Glaciers:  domain.GlacierOptions{HalfWidth: 20, PerChunk: 3, Size: domain.Span{Min: 4, Max: 12}, Clearance: 10, Spawn: core.Cell{Col: 79, Row: 79}},
 	}
 	return domain.Generate(opts, rand.New(rand.NewPCG(9, 9)))
 }
@@ -80,7 +82,7 @@ func TestMapFileReadsBackTheSame(t *testing.T) {
 			kinds[kind] = true
 		}
 	}
-	require.Len(t, kinds, 5, "grass, water, holes, bridges and the ocean to read back")
+	require.Len(t, kinds, 7, "grass, water, holes, bridges, the ocean, mountains and glaciers to read back")
 
 	folder := encoded(t, m)
 	read, err := infra.DecodeMapFile(folder)
@@ -93,6 +95,8 @@ func TestMapFileReadsBackTheSame(t *testing.T) {
 		assert.Contains(t, folder, name)
 	}
 	assert.Contains(t, string(folder["README.md"].Data), "`#6fb7e0` | water")
+	assert.Contains(t, string(folder["README.md"].Data), "`#8a8694` | mountain", "ADR 0009")
+	assert.Contains(t, string(folder["README.md"].Data), "`#dff4fb` | glacier", "ADR 0009")
 }
 
 // ADR 0007 test 15

@@ -20,6 +20,8 @@ transparency. Paint with a pencil, or in indexed mode with `palette.gpl` (GIMP, 
 | `#2b2540` | hole |
 | `#b98a5a` | bridge |
 | `#4f9fd8` | ocean |
+| `#8a8694` | mountain |
+| `#dff4fb` | glacier |
 
 ## `height.png`
 

@@ -36,9 +36,16 @@ const (
 	TileBridge
 	// TileOcean is the sea (ADR 0008): drawn still, not walkable. Rivers and lakes are TileWater.
 	TileOcean
+	// TileMountain is bare rock on a summit (ADR 0009): drawn, not walkable.
+	TileMountain
+	// TileGlacier is ice at the inner ridge of the donut (ADR 0009): drawn, not walkable.
+	TileGlacier
 )
 
-var tileNames = [...]string{TileVoid: "void", TileGrass: "grass", TileWater: "water", TileHole: "hole", TileBridge: "bridge", TileOcean: "ocean"}
+var tileNames = [...]string{
+	TileVoid: "void", TileGrass: "grass", TileWater: "water", TileHole: "hole", TileBridge: "bridge", TileOcean: "ocean",
+	TileMountain: "mountain", TileGlacier: "glacier",
+}
 
 func (k TileKind) Known() bool {
 	return int(k) < len(tileNames)

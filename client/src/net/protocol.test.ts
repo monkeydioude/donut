@@ -76,14 +76,15 @@ describe('chunk messages', () => {
   });
 
   // ADR 0007 test 26
-  it('decode water, holes, bridges, the ocean and heights from -3 to 3', () => {
+  // ADR 0009 test 12
+  it('decode water, holes, bridges, the ocean, mountains, glaciers and heights from -3 to 3', () => {
     const chunk = serverChunk();
-    chunk.kinds = ['grass', 'water', 'hole', 'bridge', 'ocean'];
-    chunk.ground = Array.from({ length: 1024 }, (_, i) => i % 4);
+    chunk.kinds = ['grass', 'water', 'hole', 'bridge', 'ocean', 'mountain', 'glacier'];
+    chunk.ground = Array.from({ length: 1024 }, (_, i) => i % 7);
     chunk.height = Array.from({ length: 1024 }, (_, i) => (i % 7) - 3);
     const message = decodeServerMessage(JSON.stringify(chunk));
     if (message?.type !== 'chunk') throw new Error('not a chunk');
-    expect(message.chunk.ground.slice(0, 4)).toEqual(['grass', 'water', 'hole', 'bridge']);
+    expect(message.chunk.ground.slice(0, 7)).toEqual(['grass', 'water', 'hole', 'bridge', 'ocean', 'mountain', 'glacier']);
     expect(message.chunk.height.slice(0, 7)).toEqual([-3, -2, -1, 0, 1, 2, 3]);
   });
 

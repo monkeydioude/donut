@@ -90,6 +90,15 @@ func TestValidate(t *testing.T) {
 			m.SetGround(cell(2, 2), domain.TileOcean)
 			m.Objects = []domain.Object{rock(2, 2)}
 		},
+		"a rock on a mountain (ADR 0009)": func(m *domain.Map) {
+			m.SetGround(cell(2, 2), domain.TileMountain)
+			m.Objects = []domain.Object{rock(2, 2)}
+		},
+		"a rock on a glacier (ADR 0009)": func(m *domain.Map) {
+			m.SetGround(cell(2, 2), domain.TileGlacier)
+			m.Objects = []domain.Object{rock(2, 2)}
+		},
+		"the ground code past glacier (ADR 0009)": func(m *domain.Map) { firstChunk(m).Ground[3] = domain.TileGlacier + 1 },
 	}
 	for name, breakIt := range cases {
 		t.Run("refuses "+name, func(t *testing.T) {
@@ -108,9 +117,9 @@ func TestValidate(t *testing.T) {
 		assert.NoError(t, m.Validate(), "a missing chunk is all void")
 	})
 
-	t.Run("accepts water, holes, bridges, the ocean and heights from -3 to 3 (ADR 0007, ADR 0008)", func(t *testing.T) {
+	t.Run("accepts water, holes, bridges, the ocean, mountains, glaciers and heights from -3 to 3 (ADR 0007, ADR 0008, ADR 0009)", func(t *testing.T) {
 		m := valid()
-		for i, kind := range []domain.TileKind{domain.TileWater, domain.TileHole, domain.TileBridge, domain.TileOcean} {
+		for i, kind := range []domain.TileKind{domain.TileWater, domain.TileHole, domain.TileBridge, domain.TileOcean, domain.TileMountain, domain.TileGlacier} {
 			m.SetGround(cell(i, 0), kind)
 		}
 		m.SetHeight(cell(0, 1), domain.MinHeight)
@@ -132,7 +141,7 @@ func mapWithRocks(width, height int, rocks ...core.Cell) domain.Map {
 	return m
 }
 
-// ADR 0001 test 3, ADR 0003 test 7 for void, and ADR 0007 test 2
+// ADR 0001 test 3, ADR 0003 test 7 for void, ADR 0007 test 2 and ADR 0009 test 2
 func TestTerrainIsWalkable(t *testing.T) {
 	m := mapWithRocks(4, 3, cell(1, 1))
 	m.SetGround(cell(2, 2), domain.TileVoid)
@@ -140,7 +149,12 @@ func TestTerrainIsWalkable(t *testing.T) {
 	m.SetGround(cell(0, 2), domain.TileHole)
 	m.SetGround(cell(3, 0), domain.TileBridge)
 	m.SetGround(cell(3, 2), domain.TileOcean)
+	m.SetGround(cell(1, 2), domain.TileMountain)
+	m.SetGround(cell(3, 1), domain.TileGlacier)
 	terrain := domain.NewTerrain(m)
+
+	assert.False(t, terrain.IsWalkable(cell(1, 2)), "a mountain")
+	assert.False(t, terrain.IsWalkable(cell(3, 1)), "a glacier")
 
 	assert.True(t, terrain.IsWalkable(cell(0, 0)), "an empty cell")
 	assert.True(t, terrain.IsWalkable(cell(3, 0)), "a bridge")

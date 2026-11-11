@@ -28,10 +28,12 @@ type layer struct {
 	colors      []namedColor
 }
 
-// groundLayer's values are the ground codes: transparent is void (0), then grass, water, hole, bridge and ocean.
+// groundLayer's values are the ground codes: transparent is void (0), then grass, water, hole, bridge, ocean,
+// mountain and glacier.
 func groundLayer() layer {
 	return layer{file: groundFile, what: "a ground kind", transparent: "void", colors: []namedColor{
 		{"grass", domain.GrassGreen}, {"water", domain.WaterBlue}, {"hole", domain.HoleDark}, {"bridge", domain.BridgeBrown}, {"ocean", domain.OceanBlue},
+		{"mountain", domain.MountainGray}, {"glacier", domain.GlacierIce},
 	}}
 }
 

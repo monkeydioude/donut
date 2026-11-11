@@ -7,6 +7,8 @@ Columns: 8
  43  37  64	ground.png: hole
 185 138  90	ground.png: bridge
  79 159 216	ground.png: ocean
+138 134 148	ground.png: mountain
+223 244 251	ground.png: glacier
  32  32  32	height.png: height -3
  64  64  64	height.png: height -2
  96  96  96	height.png: height -1

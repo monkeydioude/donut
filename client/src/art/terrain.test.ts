@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { BRIDGE_COLORS, paintBridge, RAIL_PX } from './bridge';
 import { FACE_COLORS, paintFace, paintRim } from './cliff';
 import { depthFromEdge, edgesKey } from './edges';
+import { GLACIER_COLORS, iceHeadroom, paintGlacier } from './glacier';
 import { HOLE_COLORS, paintHole } from './hole';
+import { MOUNTAIN_COLORS, paintMountain, peakHeadroom } from './mountain';
 import { OCEAN_COLORS, paintOcean } from './ocean';
 import { readPixel, type PixelBuffer } from './pixelBuffer';
 import { isOnGround, type TileFrame } from './tileFrame';
@@ -147,5 +149,64 @@ describe('paintOcean', () => {
   it('covers the ground exactly', () => {
     const ocean = paintOcean(frame, ['ne', 'nw', 'se', 'sw']);
     for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) expect(readPixel(ocean, x, y).alpha > 0).toBe(isOnGround(frame, x, y));
+  });
+});
+
+// ADR 0009 test 14
+describe('paintMountain', () => {
+  const mountainFrame: TileFrame = { ...frame, headroom: peakHeadroom(32) };
+  const center = { x: 16, y: mountainFrame.headroom + 8 };
+
+  it('is a stone top with cracks, and a peak rising into the headroom: lit left, dark right, snow on top', () => {
+    const lone = paintMountain(mountainFrame, []);
+    expect(colorsOf(lone)).toEqual(new Set([MOUNTAIN_COLORS.top, MOUNTAIN_COLORS.crack, MOUNTAIN_COLORS.peakLit, MOUNTAIN_COLORS.peakDark, MOUNTAIN_COLORS.snow]));
+    expect(readPixel(lone, 15, 0).rgb, 'the apex').toBe(MOUNTAIN_COLORS.snow);
+    expect(readPixel(lone, 13, center.y - 2).rgb, 'left of the middle').toBe(MOUNTAIN_COLORS.peakLit);
+    expect(readPixel(lone, 18, center.y - 2).rgb, 'right of the middle').toBe(MOUNTAIN_COLORS.peakDark);
+    expect(readPixel(lone, 2, center.y).alpha, 'the ground shows beside the peak').toBeGreaterThan(0);
+    expect(readPixel(lone, 2, 1).alpha, 'nothing beside the peak above the ground').toBe(0);
+  });
+
+  it('has an outline on the edges given only', () => {
+    const outlined = paintMountain(mountainFrame, ['se']);
+    expect(readPixel(outlined, 30, center.y).rgb, 'on the se edge').toBe(MOUNTAIN_COLORS.outline);
+    expect(readPixel(outlined, 1, center.y).rgb, 'the sw edge has none').not.toBe(MOUNTAIN_COLORS.outline);
+    expect(colorsOf(paintMountain(mountainFrame, [])).has(MOUNTAIN_COLORS.outline)).toBe(false);
+  });
+
+  it('is the same every time', () => {
+    expect(paintMountain(mountainFrame, ['nw']).data.join()).toBe(paintMountain(mountainFrame, ['nw']).data.join());
+  });
+});
+
+// ADR 0009 test 15
+describe('paintGlacier', () => {
+  const rise = iceHeadroom(32);
+  const glacierFrame: TileFrame = { ...frame, headroom: rise };
+  const groundCenterY = rise + 8;
+
+  it('raises the top into the headroom, with the sides under its front edges', () => {
+    const lone = paintGlacier(glacierFrame, []);
+    expect(colorsOf(lone)).toEqual(new Set([GLACIER_COLORS.top, GLACIER_COLORS.crack, GLACIER_COLORS.sideLit, GLACIER_COLORS.sideDark]));
+    expect(readPixel(lone, 16, 0).rgb, "the top's back corner, in the headroom").toBe(GLACIER_COLORS.top);
+    expect(readPixel(lone, 15, glacierFrame.headroom + 15).rgb, 'the sw side').toBe(GLACIER_COLORS.sideLit);
+    expect(readPixel(lone, 16, glacierFrame.headroom + 15).rgb, 'the se side').toBe(GLACIER_COLORS.sideDark);
+  });
+
+  it('draws on the ground diamond and the raised one only', () => {
+    const lone = paintGlacier(glacierFrame, ['ne', 'nw', 'se', 'sw']);
+    for (let y = 0; y < lone.height; y++) {
+      for (let x = 0; x < lone.width; x++) {
+        const drawn = isOnGround(glacierFrame, x, y) || isOnGround(glacierFrame, x, y + rise);
+        expect(readPixel(lone, x, y).alpha > 0, `pixel ${x}, ${y}`).toBe(drawn);
+      }
+    }
+  });
+
+  it('has a white rim on the edges given only, on the raised top', () => {
+    const rimmed = paintGlacier(glacierFrame, ['se']);
+    expect(readPixel(rimmed, 30, groundCenterY - rise).rgb, 'on the raised se edge').toBe(GLACIER_COLORS.rim);
+    expect(readPixel(rimmed, 1, groundCenterY - rise).rgb, 'the sw edge has none').not.toBe(GLACIER_COLORS.rim);
+    expect(colorsOf(paintGlacier(glacierFrame, [])).has(GLACIER_COLORS.rim)).toBe(false);
   });
 });

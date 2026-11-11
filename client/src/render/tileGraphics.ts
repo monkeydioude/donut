@@ -21,6 +21,8 @@ export interface TerrainGraphics {
   hole(rim: readonly Edge[]): SpriteGraphic;
   ocean(foam: readonly Edge[]): SpriteGraphic;
   bridge(rails: readonly Edge[]): SpriteGraphic;
+  mountain(outline: readonly Edge[]): SpriteGraphic;
+  glacier(rim: readonly Edge[]): SpriteGraphic;
 }
 
 /** Several variants of grass and of each object kind, so the world doesn't look repetitive; the terrain's pieces. */
@@ -71,6 +73,8 @@ function terrainGraphics(art: TerrainArt, toTexture: TextureFactory): TerrainGra
     hole: (rim) => once(`hole ${edgesKey(rim)}`, art.tileFrame, () => art.hole(rim)),
     ocean: (foam) => once(`ocean ${edgesKey(foam)}`, art.tileFrame, () => art.ocean(foam)),
     bridge: (rails) => once(`bridge ${edgesKey(rails)}`, art.bridgeFrame, () => art.bridge(rails)),
+    mountain: (outline) => once(`mountain ${edgesKey(outline)}`, art.mountainFrame, () => art.mountain(outline)),
+    glacier: (rim) => once(`glacier ${edgesKey(rim)}`, art.glacierFrame, () => art.glacier(rim)),
   };
 }
 

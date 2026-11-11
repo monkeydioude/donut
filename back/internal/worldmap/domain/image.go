@@ -8,15 +8,17 @@ import (
 	core "donut/internal/core/domain"
 )
 
-// The map image's colors (ADR 0005, ADR 0007), from the client's art: its grass green, a shade of it per region, its
-// rocks' light gray, and the terrain's colors. The map file paints its ground with these too.
+// The map image's colors (ADR 0005, ADR 0007, ADR 0009), from the client's art: its grass green, a shade of it per
+// region, its rocks' light gray, and the terrain's colors. The map file paints its ground with these too.
 var (
-	GrassGreen  = color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0xff}
-	RockGray    = color.NRGBA{R: 0xd2, G: 0xce, B: 0xc5, A: 0xff}
-	WaterBlue   = color.NRGBA{R: 0x6f, G: 0xb7, B: 0xe0, A: 0xff}
-	OceanBlue   = color.NRGBA{R: 0x4f, G: 0x9f, B: 0xd8, A: 0xff}
-	HoleDark    = color.NRGBA{R: 0x2b, G: 0x25, B: 0x40, A: 0xff}
-	BridgeBrown = color.NRGBA{R: 0xb9, G: 0x8a, B: 0x5a, A: 0xff}
+	GrassGreen   = color.NRGBA{R: 0x74, G: 0xd3, B: 0xa5, A: 0xff}
+	RockGray     = color.NRGBA{R: 0xd2, G: 0xce, B: 0xc5, A: 0xff}
+	WaterBlue    = color.NRGBA{R: 0x6f, G: 0xb7, B: 0xe0, A: 0xff}
+	OceanBlue    = color.NRGBA{R: 0x4f, G: 0x9f, B: 0xd8, A: 0xff}
+	HoleDark     = color.NRGBA{R: 0x2b, G: 0x25, B: 0x40, A: 0xff}
+	BridgeBrown  = color.NRGBA{R: 0xb9, G: 0x8a, B: 0x5a, A: 0xff}
+	MountainGray = color.NRGBA{R: 0x8a, G: 0x86, B: 0x94, A: 0xff}
+	GlacierIce   = color.NRGBA{R: 0xdf, G: 0xf4, B: 0xfb, A: 0xff}
 	// RegionShades are close to the grass green, but easy to tell apart. Region n has shade (n - 1) mod 12.
 	RegionShades = [...]color.NRGBA{
 		{R: 0x7f, G: 0xd9, B: 0x9a, A: 0xff},
@@ -42,7 +44,8 @@ const (
 )
 
 // imagePalette holds every color of a map's image, so it's a small paletted PNG: transparent, then each shade group's
-// grass, plain then on a border, at each level, then water, the ocean, holes, bridges and rocks. That's 188 colors.
+// grass, plain then on a border, at each level, then water, the ocean, holes, bridges, mountains, glaciers and
+// rocks. That's 190 colors.
 var imagePalette = func() color.Palette {
 	palette := color.Palette{color.NRGBA{}}
 	for _, shade := range append([]color.NRGBA{GrassGreen}, RegionShades[:]...) {
@@ -52,22 +55,24 @@ var imagePalette = func() color.Palette {
 			}
 		}
 	}
-	return append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, RockGray)
+	return append(palette, WaterBlue, OceanBlue, HoleDark, BridgeBrown, MountainGray, GlacierIce, RockGray)
 }()
 
 const transparentIndex = 0
 
 var (
-	waterIndex  = uint8(len(imagePalette) - 5)
-	oceanIndex  = uint8(len(imagePalette) - 4)
-	holeIndex   = uint8(len(imagePalette) - 3)
-	bridgeIndex = uint8(len(imagePalette) - 2)
-	rockIndex   = uint8(len(imagePalette) - 1)
+	waterIndex    = uint8(len(imagePalette) - 7)
+	oceanIndex    = uint8(len(imagePalette) - 6)
+	holeIndex     = uint8(len(imagePalette) - 5)
+	bridgeIndex   = uint8(len(imagePalette) - 4)
+	mountainIndex = uint8(len(imagePalette) - 3)
+	glacierIndex  = uint8(len(imagePalette) - 2)
+	rockIndex     = uint8(len(imagePalette) - 1)
 )
 
 // Image is the whole map, 1 pixel per cell: grass in its region's shade, darker on region borders, lighter or darker
-// with its height; water, the ocean, holes and bridges in their colors; rocks over them, and `void` transparent. Cells of a chunk
-// with no row are `void`.
+// with its height; water, the ocean, holes, bridges, mountains and glaciers in their colors; rocks over them, and
+// `void` transparent. Cells of a chunk with no row are `void`.
 func Image(m Map) *image.Paletted {
 	grid := m.Grid()
 	img := image.NewPaletted(image.Rect(0, 0, m.Width, m.Height), imagePalette)
@@ -98,6 +103,10 @@ func cellIndex(m Map, grid core.Grid, cell core.Cell) uint8 {
 		return holeIndex
 	case TileBridge:
 		return bridgeIndex
+	case TileMountain:
+		return mountainIndex
+	case TileGlacier:
+		return glacierIndex
 	}
 	return transparentIndex
 }

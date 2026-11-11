@@ -2,14 +2,19 @@ import { depthFromEdge, isAtCorner, type Corner, type Edge } from './edges';
 import { createPixelBuffer, forEachPixel, setPixel, type PixelBuffer } from './pixelBuffer';
 import { isOnGround, textureSize, type TileFrame } from './tileFrame';
 
-/** What a cliff face is made of: earth under grass and holes, wood posts under a bridge's deck. */
-export type FaceMaterial = 'earth' | 'wood';
+/**
+ * What a cliff face is made of: earth under grass and holes, wood posts under a bridge's deck, stone under a mountain
+ * and ice under a glacier (ADR 0009).
+ */
+export type FaceMaterial = 'earth' | 'wood' | 'stone' | 'ice';
 /** Which side of a cell a face shows: `left` toward the next row, lit from the top-left; `right` toward the next column. */
 export type FaceSide = 'left' | 'right';
 
 export const FACE_COLORS: Readonly<Record<FaceMaterial, Readonly<Record<FaceSide, { face: number; band: number }>>>> = {
   earth: { left: { face: 0xc99b6b, band: 0xa9805a }, right: { face: 0xa77a51, band: 0x8a6243 } },
   wood: { left: { face: 0xa8794b, band: 0x7d5734 }, right: { face: 0x8c633c, band: 0x6a4a2c } },
+  stone: { left: { face: 0x8a8694, band: 0x6b6775 }, right: { face: 0x736f7d, band: 0x56525f } },
+  ice: { left: { face: 0xa6d8ee, band: 0x86c3e3 }, right: { face: 0x8ccbe8, band: 0x6fb3d8 } },
 };
 
 /** How many pixels at the bottom of each level are its darker band. */

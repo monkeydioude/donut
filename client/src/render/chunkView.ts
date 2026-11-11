@@ -355,11 +355,25 @@ function topOf(tile: PlacedTile, graphics: WorldGraphics): SpriteGraphic {
       return graphics.terrain.bridge(tile.edges);
     case 'ocean':
       return graphics.terrain.ocean(tile.edges);
+    case 'mountain':
+      return graphics.terrain.mountain(tile.edges);
+    case 'glacier':
+      return graphics.terrain.glacier(tile.edges);
   }
 }
 
-function faceMaterial(kind: BakedGroundKind): FaceMaterial {
-  return kind === 'bridge' ? 'wood' : 'earth';
+/** What a cell's cliff faces are made of: wood under a bridge, stone under a mountain, ice under a glacier, else earth. */
+export function faceMaterial(kind: BakedGroundKind): FaceMaterial {
+  switch (kind) {
+    case 'bridge':
+      return 'wood';
+    case 'mountain':
+      return 'stone';
+    case 'glacier':
+      return 'ice';
+    default:
+      return 'earth';
+  }
 }
 
 /** One sprite per water cell, all on the same frame of the flow. */

@@ -3,7 +3,7 @@ import { createIsoProjection } from '../iso/projection';
 import type { CellTerrain, Chunk } from '../map/chunks';
 import type { GroundKind } from '../map/worldMap';
 import type { Grid } from '../map/grid';
-import { chunksToDraw, drawnChunkOrigin, faceLevels, layoutChunk, waterFrame, type TerrainAround } from './chunkView';
+import { chunksToDraw, drawnChunkOrigin, faceLevels, faceMaterial, layoutChunk, waterFrame, type TerrainAround } from './chunkView';
 
 const projection = createIsoProjection(64, 32);
 const heights = { projection, levelPx: 16 };
@@ -223,5 +223,34 @@ describe('ocean', () => {
     expect(tileAt(chunk, 11, 11)?.faces).toEqual([{ side: 'left', levels: 1 }]);
     expect(tileAt(chunk, 9, 9)?.faces, 'the ocean is behind it').toEqual([]);
     expect(faceLevels(0, { kind: 'ocean', height: -1 })).toBe(1);
+  });
+});
+
+// ADR 0009 test 13
+describe('mountains and glaciers', () => {
+  it('are baked into the ground, with edges toward cells of another kind only', () => {
+    const chunk = chunkOf({ '5,5': { kind: 'mountain', height: 3 }, '6,5': { kind: 'mountain', height: 3 }, '5,6': { kind: 'glacier' }, '5,7': { kind: 'glacier' } });
+    const { tiles, water } = layoutChunk(chunk, heights, flatAround);
+    expect(water).toHaveLength(0);
+    expect(tileAt(chunk, 5, 5)?.kind).toBe('mountain');
+    expect(tileAt(chunk, 5, 5)?.edges, 'toward the grass behind and the glacier in front: not the mountain beside').toEqual(['ne', 'nw', 'sw']);
+    expect(tileAt(chunk, 5, 6)?.edges, 'toward the mountain behind and the grass on both sides: not the glacier in front').toEqual(['ne', 'nw', 'se']);
+    expect(tiles.filter((t) => t.kind === 'glacier')).toHaveLength(2);
+  });
+
+  it('show faces toward a lower front neighbor, in their own material', () => {
+    const chunk = chunkOf({ '5,5': { kind: 'mountain', height: 3 }, '6,5': { height: 2 }, '5,6': { height: 2 }, '8,8': { kind: 'glacier', height: 1 } });
+    expect(tileAt(chunk, 5, 5)?.faces).toEqual([
+      { side: 'left', levels: 1 },
+      { side: 'right', levels: 1 },
+    ]);
+    expect(tileAt(chunk, 8, 8)?.faces).toEqual([
+      { side: 'left', levels: 1 },
+      { side: 'right', levels: 1 },
+    ]);
+    expect(faceMaterial('mountain')).toBe('stone');
+    expect(faceMaterial('glacier')).toBe('ice');
+    expect(faceMaterial('bridge')).toBe('wood');
+    expect(faceMaterial('grass')).toBe('earth');
   });
 });

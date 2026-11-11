@@ -200,10 +200,12 @@ func shortestCost(terrain domain.Terrain, from, to core.Cell) (float64, bool) {
 }
 
 // drawnMap is a bounded map drawn in text, a character per cell: '0' to '3' grass at that height, 'w' water at -1,
-// 'h' a hole, 'b' a bridge and 'r' a rock, at 0.
+// 'h' a hole, 'b' a bridge, 'o' the ocean, 'm' a mountain, 'g' a glacier and 'r' a rock, at 0.
 func drawnMap(rows ...string) domain.Map {
 	m := mapWithRocks(len(rows[0]), len(rows))
-	kinds := map[rune]domain.TileKind{'w': domain.TileWater, 'h': domain.TileHole, 'b': domain.TileBridge, 'o': domain.TileOcean}
+	kinds := map[rune]domain.TileKind{
+		'w': domain.TileWater, 'h': domain.TileHole, 'b': domain.TileBridge, 'o': domain.TileOcean, 'm': domain.TileMountain, 'g': domain.TileGlacier,
+	}
 	for row, line := range rows {
 		for col, char := range line {
 			c := cell(col, row)
@@ -237,12 +239,27 @@ func TestStepsOnHeights(t *testing.T) {
 		assert.Nil(t, terrain.Path(cell(1, 0), cell(0, 0)))
 	})
 
-	for name, side := range map[string]string{"a cliff": "02", "a hole": "0h", "water": "0w"} {
+	for name, side := range map[string]string{"a cliff": "02", "a hole": "0h", "water": "0w", "a mountain": "0m", "a glacier": "0g"} {
 		t.Run("no diagonal past "+name+" beside it", func(t *testing.T) {
 			terrain := domain.NewTerrain(drawnMap(side, "01"))
 			assert.Equal(t, []core.Cell{cell(0, 1), cell(1, 1)}, terrain.Path(cell(0, 0), cell(1, 1)))
 		})
 	}
+}
+
+// ADR 0009 test 2
+func TestPathsGoAroundMountainsAndGlaciers(t *testing.T) {
+	terrain := domain.NewTerrain(drawnMap(
+		"0m0",
+		"0g0",
+		"000",
+	))
+	path := terrain.Path(cell(0, 0), cell(2, 0))
+	assert.Len(t, path, 6, "down the left side, along the bottom and up the right: %v", path)
+	assert.NotContains(t, path, cell(1, 0))
+	assert.NotContains(t, path, cell(1, 1))
+	assert.Nil(t, terrain.Path(cell(0, 0), cell(1, 0)), "a mountain is no target")
+	assert.Nil(t, terrain.Path(cell(0, 0), cell(1, 1)), "nor a glacier")
 }
 
 // ADR 0007 test 4
