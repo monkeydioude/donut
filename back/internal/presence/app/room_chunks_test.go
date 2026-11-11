@@ -26,7 +26,7 @@ func (w world) joinAt(t *testing.T, id string, at core.Cell) *fakeClient {
 	t.Helper()
 	w.world.spawn = at
 	client := &fakeClient{}
-	require.NoError(t, w.room.Join(id, id, client))
+	require.NoError(t, w.room.Join(domain.Profile{ID: id, Name: id}, client))
 	return client
 }
 
@@ -245,7 +245,7 @@ func TestJoiningAgainSendsEverythingAgain(t *testing.T) {
 	annClient.take()
 
 	newTab := &fakeClient{}
-	require.NoError(t, w.room.Join(ann, ann, newTab))
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: ann}, newTab))
 
 	events := newTab.take()
 	assert.IsType(t, domain.Welcome{}, events[0])

@@ -16,102 +16,102 @@ type GenerateOptions struct {
 	Width  int
 	Height int
 	Wraps  bool
-	// RockChance is the chance in [0, 1] for each cell to get a rock.
+	// RockChance is the chance in [0, 1] for each grass cell to get a rock.
 	RockChance float64
-	// RegionNames are the regions to cut the map into, ids from 1 in this order. None: no regions.
+	// RegionNames name the regions, ids from 1 in this order. With landmasses (ADR 0008), each continent's regions
+	// come first, then each island's, then the oceans'; without, as many regions are cut over the whole map.
+	// None: no regions.
 	RegionNames []string
+	// Relief, Landmasses, Water and Holes shape the ground (ADR 0007, ADR 0008). Their zero values leave it flat grass.
+	Relief     ReliefOptions
+	Landmasses LandmassOptions
+	Water      WaterOptions
+	Holes      HoleOptions
 }
 
-// starterRegionNames are placeholders: they are stored with the world, to rename.
-var starterRegionNames = []string{
-	"Sprinkle Meadow", "Glaze Hills", "Cinnamon Vale", "Maple Hollow", "Honey Downs", "Sugar Fields",
-	"Cocoa Glen", "Frosting Flats", "Crumb Valley", "Jelly Ridge", "Cruller Heath", "Powder Plains",
+// Span is a whole number from Min to Max, both included.
+type Span struct{ Min, Max int }
+
+// pick is a number of the span, each as likely.
+func (s Span) pick(rng Rng) int {
+	return s.Min + int(rng.Float64()*float64(s.Max-s.Min+1))
 }
 
-// StarterWorld is the world the server creates when the database has no map: the surface of the donut,
-// 1024 cells around the ring and 512 around the tube, wrapping both ways (ADR 0003).
-func StarterWorld() GenerateOptions {
-	return GenerateOptions{
-		Slug: "world", Name: "World", Width: 1024, Height: 512, Wraps: true,
-		RockChance: 0.12, RegionNames: starterRegionNames,
+// starterRegionNames are placeholders: they are stored with the world, to rename. The continents' regions come
+// first, then the islands', then the three seas.
+func starterRegionNames() []string {
+	return []string{
+		"Sprinkle Meadow", "Glaze Hills", "Cinnamon Vale", "Maple Hollow", "Honey Downs", "Sugar Fields",
+		"Cocoa Glen", "Frosting Flats", "Crumb Valley", "Jelly Ridge", "Cruller Heath", "Powder Plains",
+		"Caramel Shore", "Nougat Cliffs", "Praline Woods",
+		"Glaze Sea", "Syrup Sea", "Custard Sea",
 	}
 }
 
-// Generate makes a grass map cut into regions, with rocks scattered on it. The same rng sequence gives the same map:
-// the regions' points are drawn first, then each cell's rock, row by row.
+// StarterWorld is the world the starter map file is generated from: the surface of the donut, 2048 cells around the
+// ring and 1024 around the tube, wrapping both ways (ADR 0003): three continents and six islands in an ocean, with
+// hills, lakes, rivers and holes (ADR 0007, ADR 0008).
+func StarterWorld() GenerateOptions {
+	const width, height = 2048, 1024
+	// the spawn is the walkable cell closest to the center: the first continent is centered on it, and a river
+	// passes by it
+	center := core.Cell{Col: width/2 - 1, Row: height/2 - 1}
+	return GenerateOptions{
+		Slug: "world", Name: "World", Width: width, Height: height, Wraps: true,
+		RockChance: 0.12, RegionNames: starterRegionNames(),
+		Relief: starterRelief(), Landmasses: starterLandmasses(), Water: starterWater(center), Holes: starterHoles(),
+	}
+}
+
+// Generate makes a map from its options. The same rng sequence gives the same map: the landmasses are shaped first,
+// then the relief, the lakes, the rivers, the bridges, the holes, each cell's rock, row by row, and the regions.
 func Generate(opts GenerateOptions, rng Rng) Map {
 	summary := Summary{Slug: opts.Slug, Name: opts.Name, Width: opts.Width, Height: opts.Height, Wraps: opts.Wraps}
 	m := NewMap(summary, TileGrass)
-	if len(opts.RegionNames) > 0 {
-		m.Regions = regionsOf(opts.RegionNames)
-		cutIntoRegions(m, regionPoints(len(opts.RegionNames), summary.Grid(), rng))
-	}
-	m.Objects = scatterRocks(summary.Grid(), opts.RockChance, rng)
+	center := core.Cell{Col: opts.Width/2 - 1, Row: opts.Height/2 - 1}
+	ground := newLand(summary.Grid())
+	masses := ground.shapeLand(opts.Landmasses, center, rng)
+	ground.raise(opts.Relief, ground.inlandRise(opts.Landmasses), rng)
+	lakes := ground.digLakes(opts.Water, masses, rng)
+	rivers := ground.runRivers(opts.Water, lakes, rng)
+	ground.settleBanks()
+	ground.buildBridges(rivers, opts.Water.Bridges)
+	ground.digHoles(opts.Holes, rng)
+	ground.writeInto(m)
+	m.Objects = scatterRocks(ground, opts.RockChance, rng)
+	ground.cutIntoRegions(&m, masses, opts.Landmasses, opts.RegionNames, center, rng)
 	return m
 }
 
-func regionsOf(names []string) []Region {
-	regions := make([]Region, len(names))
-	for i, name := range names {
-		regions[i] = Region{ID: i + 1, Name: name, Biome: BiomeMeadow}
-	}
-	return regions
-}
-
-// point is a place on the map, between cells.
-type point struct{ col, row float64 }
-
-func regionPoints(count int, grid core.Grid, rng Rng) []point {
-	points := make([]point, count)
-	for i := range points {
-		points[i] = point{col: rng.Float64() * float64(grid.Width), row: rng.Float64() * float64(grid.Height)}
-	}
-	return points
-}
-
-// cutIntoRegions puts each cell in the region of the closest point, distances wrapping on a wrapping map.
-// Ties go to the region found first.
-func cutIntoRegions(m Map, points []point) {
-	grid := m.Grid()
-	for row := range grid.Height {
-		for col := range grid.Width {
-			best, bestDistance := 0, -1.0
-			for i, p := range points {
-				distance := square(axisDistance(float64(col), p.col, grid.Width, grid.Wraps)) +
-					square(axisDistance(float64(row), p.row, grid.Height, grid.Wraps))
-				if bestDistance < 0 || distance < bestDistance {
-					best, bestDistance = i, distance
-				}
-			}
-			m.SetRegion(core.Cell{Col: col, Row: row}, uint8(best+1))
-		}
-	}
-}
-
-// axisDistance is how far apart a and b are on an axis of `size`, the short way round when it wraps.
-func axisDistance(a, b float64, size int, wraps bool) float64 {
-	d := a - b
-	if d < 0 {
-		d = -d
-	}
-	if wraps && d > float64(size)/2 {
-		d = float64(size) - d
-	}
-	return d
-}
-
-func scatterRocks(grid core.Grid, chance float64, rng Rng) []Object {
+// scatterRocks draws a float for every cell, row by row, and puts a rock on the grass cells under the chance,
+// leaving the kept cells free.
+func scatterRocks(l *land, chance float64, rng Rng) []Object {
 	rocks := []Object{}
-	for row := range grid.Height {
-		for col := range grid.Width {
-			if rng.Float64() < chance {
-				rocks = append(rocks, Object{Kind: ObjectRock, Col: col, Row: row})
-			}
+	if chance <= 0 {
+		return rocks
+	}
+	for i := range l.ground {
+		if rng.Float64() < chance && l.ground[i] == TileGrass && !l.kept[i] {
+			cell := l.cellAt(i)
+			rocks = append(rocks, Object{Kind: ObjectRock, Col: cell.Col, Row: cell.Row})
 		}
 	}
 	return rocks
 }
 
-func square(x float64) float64 {
-	return x * x
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func sign(n int8) int8 {
+	switch {
+	case n > 0:
+		return 1
+	case n < 0:
+		return -1
+	}
+	return 0
 }

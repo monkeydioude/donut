@@ -7,12 +7,16 @@ AIR := $(shell command -v air 2>/dev/null || echo "go run github.com/air-verse/a
 
 TEST_DB_URL ?= postgres://donut:donut@localhost:5434/donut
 
-.PHONY: help dev dev-back dev-front db test
+.PHONY: help dev dev-back dev-front db test sprites world check-world reset-world
 
 help:
 	@echo "make dev   - database + back (port 8400, reloads with air) + front (port 5180); ctrl-c stops all"
 	@echo "make db    - start Donut's Postgres (docker, port 5434); the back migrates it at boot"
 	@echo "make test  - back tests (with the database) and front tests"
+	@echo "make sprites - rebuild the robot sprite sheet from the Pixel Art Atlas (needs the network)"
+	@echo "make world  - generate the starter map folder back/mapfiles/world; FORCE=1 overwrites hand edits"
+	@echo "make check-world - check back/mapfiles/world as the server would, without a database"
+	@echo "make reset-world - replace the world in the database with back/mapfiles/world (stop the server first)"
 
 # Runs every dev server in parallel; Ctrl+C stops them all.
 dev: db
@@ -31,7 +35,24 @@ test: db client/node_modules
 	cd back && DONUT_TEST_DATABASE_URL=$(TEST_DB_URL) go test ./...
 	cd client && npm run typecheck && npm test
 
+# The robot sheet (ADR 0006): downloads the picked atlas rows, recolors them, writes client/public/sprites/robots.*
+sprites:
+	cd back && go run ./cmd/spritesheet -picks cmd/spritesheet/robots.json -out ../client/public/sprites/robots
+
 # Reinstalls front dependencies only when the package files change.
 client/node_modules: client/package.json client/package-lock.json
 	cd client && npm install
 	@touch $@
+
+# The starter map (ADR 0007): generated once, then edited by hand. Overwriting it needs FORCE=1.
+WORLD_SEED ?= 42
+
+world:
+	cd back && go run ./cmd/mapfile generate -seed $(WORLD_SEED) -out mapfiles/world $(if $(FORCE),-force)
+
+check-world:
+	cd back && go run ./cmd/mapfile check mapfiles/world
+
+# Rooms keep the map they loaded: run it with the server stopped.
+reset-world: db
+	cd back && go run ./cmd/donut reset-map world

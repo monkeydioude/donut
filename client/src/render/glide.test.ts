@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createIsoProjection } from '../iso/projection';
-import { drawnTarget, glideAt, nextGlide, placePlayer, shiftGlide } from './glide';
+import { drawnTarget, glideAt, nextGlide, placePlayer, retarget, shiftGlide } from './glide';
 
 const a = { x: 0, y: 0 };
 const b = { x: 32, y: 16 };
@@ -30,11 +30,30 @@ describe('smooth steps', () => {
   });
 
   it('the draw order follows the target cell', () => {
-    const projection = createIsoProjection(64, 32);
-    const from = placePlayer(undefined, { col: 1, row: 1 }, 'place', 0, 200, projection);
-    const to = placePlayer(from.glide, { col: 2, row: 2 }, 'glide', 1000, 200, projection);
+    const heights = { projection: createIsoProjection(64, 32), levelPx: 16 };
+    const from = placePlayer(undefined, { col: 1, row: 1 }, 0, 'place', 0, 200, heights);
+    const to = placePlayer(from.glide, { col: 2, row: 2 }, 0, 'glide', 1000, 200, heights);
     expect(to.zIndex).toBe(4);
-    expect(glideAt(to.glide, 1000)).toEqual(projection.toScreen({ col: 1, row: 1 }));
+    expect(glideAt(to.glide, 1000)).toEqual(heights.projection.toScreen({ col: 1, row: 1 }));
+  });
+
+  // ADR 0007 test 36
+  it('a step from 0 to 1 glides from one height to the other', () => {
+    const heights = { projection: createIsoProjection(64, 32), levelPx: 16 };
+    const from = placePlayer(undefined, { col: 1, row: 1 }, 0, 'place', 0, 200, heights);
+    const to = placePlayer(from.glide, { col: 2, row: 1 }, 1, 'glide', 1000, 200, heights);
+    const flatFrom = heights.projection.toScreen({ col: 1, row: 1 });
+    const flatTo = heights.projection.toScreen({ col: 2, row: 1 });
+    expect(glideAt(to.glide, 1000)).toEqual(flatFrom);
+    expect(glideAt(to.glide, 1100), 'half way, half a level up').toEqual({ x: (flatFrom.x + flatTo.x) / 2, y: (flatFrom.y + flatTo.y) / 2 - 8 });
+    expect(glideAt(to.glide, 1200)).toEqual({ x: flatTo.x, y: flatTo.y - 16 });
+  });
+
+  it("a glide is retargeted when its cell's height becomes known", () => {
+    const moving = nextGlide(nextGlide(undefined, a, 'place', 0, 200), b, 'glide', 1000, 200);
+    expect(glideAt(retarget(moving, c, 1100), 1100), 'mid-glide: it goes on from where it was').toEqual(glideAt(moving, 1100));
+    expect(glideAt(retarget(moving, c, 1100), 1200), 'to the new end, in the time it had left').toEqual(c);
+    expect(glideAt(retarget(moving, c, 1500), 1500), 'over: there at once').toEqual(c);
   });
 });
 

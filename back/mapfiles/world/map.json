@@ -1,0 +1,118 @@
+{
+  "format": 1,
+  "slug": "world",
+  "name": "World",
+  "width": 2048,
+  "height": 1024,
+  "wraps": true,
+  "regions": [
+    {
+      "id": 1,
+      "name": "Sprinkle Meadow",
+      "biome": "meadow",
+      "color": "#7fd99a"
+    },
+    {
+      "id": 2,
+      "name": "Glaze Hills",
+      "biome": "meadow",
+      "color": "#6cc9a0"
+    },
+    {
+      "id": 3,
+      "name": "Cinnamon Vale",
+      "biome": "meadow",
+      "color": "#8adfae"
+    },
+    {
+      "id": 4,
+      "name": "Maple Hollow",
+      "biome": "meadow",
+      "color": "#68cfb0"
+    },
+    {
+      "id": 5,
+      "name": "Honey Downs",
+      "biome": "meadow",
+      "color": "#93d99c"
+    },
+    {
+      "id": 6,
+      "name": "Sugar Fields",
+      "biome": "meadow",
+      "color": "#74c793"
+    },
+    {
+      "id": 7,
+      "name": "Cocoa Glen",
+      "biome": "meadow",
+      "color": "#82e0bd"
+    },
+    {
+      "id": 8,
+      "name": "Frosting Flats",
+      "biome": "meadow",
+      "color": "#60c2a1"
+    },
+    {
+      "id": 9,
+      "name": "Crumb Valley",
+      "biome": "meadow",
+      "color": "#9ce3b0"
+    },
+    {
+      "id": 10,
+      "name": "Jelly Ridge",
+      "biome": "meadow",
+      "color": "#6fd6bf"
+    },
+    {
+      "id": 11,
+      "name": "Cruller Heath",
+      "biome": "meadow",
+      "color": "#86cf8f"
+    },
+    {
+      "id": 12,
+      "name": "Powder Plains",
+      "biome": "meadow",
+      "color": "#79bd9f"
+    },
+    {
+      "id": 13,
+      "name": "Caramel Shore",
+      "biome": "meadow",
+      "color": "#0d9977"
+    },
+    {
+      "id": 14,
+      "name": "Nougat Cliffs",
+      "biome": "meadow",
+      "color": "#0e9977"
+    },
+    {
+      "id": 15,
+      "name": "Praline Woods",
+      "biome": "meadow",
+      "color": "#0f9977"
+    },
+    {
+      "id": 16,
+      "name": "Glaze Sea",
+      "biome": "meadow",
+      "color": "#109977"
+    },
+    {
+      "id": 17,
+      "name": "Syrup Sea",
+      "biome": "meadow",
+      "color": "#119977"
+    },
+    {
+      "id": 18,
+      "name": "Custard Sea",
+      "biome": "meadow",
+      "color": "#129977"
+    }
+  ]
+}

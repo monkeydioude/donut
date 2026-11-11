@@ -1,6 +1,7 @@
 import { Container, Graphics, Sprite } from 'pixi.js';
 import { silent, type Log } from '../debug/log';
-import type { IsoProjection, ScreenPoint, TilePoint } from '../iso/projection';
+import { groundCenterAt, type HeightOf, type Heights } from '../iso/heights';
+import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { nearestCopy, type Grid } from '../map/grid';
 import { positionOnCell } from './mapView';
 import type { FrameTicker } from './playersView';
@@ -16,7 +17,9 @@ export interface OverlayView {
 
 export interface OverlayDeps {
   layer: Container;
-  projection: IsoProjection;
+  heights: Heights;
+  /** A cell's height, for a cell within the map: 0 when it isn't known. Borders and the path are drawn at it. */
+  heightAt: HeightOf;
   borders: { hover: SpriteGraphic; selection: SpriteGraphic };
   ticker: FrameTicker;
   /** Where your player is drawn right now, gliding or not: the path line starts there. */
@@ -32,20 +35,28 @@ const LINE = { outline: 0x2b2540, color: 0xffffff, width: 1, outlineWidth: 3 } a
 const END_MARK = { halfWidth: 5, halfHeight: 3 } as const;
 
 /**
- * The points the path line goes through: where it starts, then the ground center of every cell of the path. Each cell
- * is drawn at its copy nearest to the one before, from your drawn cell, so the line never jumps across the world.
+ * The points the path line goes through: where it starts, then the ground center of every cell of the path, at its
+ * height. Each cell is drawn at its copy nearest to the one before, from your drawn cell, so the line never jumps
+ * across the world.
  */
-export function pathPoints(start: ScreenPoint, from: TilePoint, path: readonly TilePoint[], projection: IsoProjection, grid: Grid): ScreenPoint[] {
+export function pathPoints(
+  start: ScreenPoint,
+  from: TilePoint,
+  path: readonly TilePoint[],
+  heights: Heights,
+  heightAt: HeightOf,
+  grid: Grid,
+): ScreenPoint[] {
   if (path.length === 0) return [];
   let previous = from;
   const points = path.map((cell) => {
     previous = nearestCopy(grid, cell, previous);
-    return projection.toScreen(previous);
+    return groundCenterAt(heights, previous, heightAt(cell));
   });
   return [start, ...points];
 }
 
-export function createOverlay({ layer, projection, borders, ticker, pathStart, anchor, grid, log = silent }: OverlayDeps): OverlayView {
+export function createOverlay({ layer, heights, heightAt, borders, ticker, pathStart, anchor, grid, log = silent }: OverlayDeps): OverlayView {
   const hover = hiddenBorder(borders.hover);
   const selection = hiddenBorder(borders.selection);
   const line = new Graphics();
@@ -54,19 +65,22 @@ export function createOverlay({ layer, projection, borders, ticker, pathStart, a
   let selected: TilePoint | null = null;
   let path: readonly TilePoint[] = [];
 
-  const drawn = (cell: TilePoint | null) => {
+  // a border on a cell within the map, drawn at its copy nearest to you, at its height
+  const showBorder = (sprite: Sprite, cell: TilePoint | null) => {
+    sprite.visible = cell !== null;
+    if (!cell) return;
     const at = anchor();
-    return cell && at ? nearestCopy(grid, cell, at) : cell;
+    positionOnCell(sprite, at ? nearestCopy(grid, cell, at) : cell, heights, heightAt(cell));
   };
   const showBorders = () => {
-    showBorder(hover, drawn(hovered && !(selected && sameCell(hovered, selected)) ? hovered : null), projection);
-    showBorder(selection, drawn(selected), projection);
+    showBorder(hover, hovered && !(selected && sameCell(hovered, selected)) ? hovered : null);
+    showBorder(selection, selected);
   };
   // the line follows your sprite as it glides, so it is redrawn every frame while there is a path
   ticker.add(() => {
     const start = pathStart();
     const from = anchor();
-    drawPath(line, start && from ? pathPoints(start, from, path, projection, grid) : []);
+    drawPath(line, start && from ? pathPoints(start, from, path, heights, heightAt, grid) : []);
   });
 
   return {
@@ -90,11 +104,6 @@ function hiddenBorder(graphic: SpriteGraphic): Sprite {
   sprite.pivot.set(graphic.pivot.x, graphic.pivot.y);
   sprite.visible = false;
   return sprite;
-}
-
-function showBorder(sprite: Sprite, cell: TilePoint | null, projection: IsoProjection): void {
-  sprite.visible = cell !== null;
-  if (cell) positionOnCell(sprite, cell, projection);
 }
 
 function sameCell(a: TilePoint, b: TilePoint): boolean {

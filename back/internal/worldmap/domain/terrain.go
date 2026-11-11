@@ -11,13 +11,17 @@ import (
 // It keeps a request cheap (about 10 ms at worst) on the biggest maps, where the room's lock is held meanwhile.
 const DefaultSearchLimit = 8192
 
-// Terrain is where one can walk on a map: on ground that isn't void, with nothing standing on it.
-// On a wrapping map, walking goes across the seams.
+// MaxClimb is the most levels a step goes up or down: more is a cliff (ADR 0007).
+const MaxClimb = 1
+
+// Terrain is where one can walk on a map: on grass or a bridge, with nothing standing on it, one level up or down
+// at most per step. On a wrapping map, walking goes across the seams.
 type Terrain struct {
 	grid core.Grid
-	// walkable and areas are per cell, row by row. areas numbers the walkable cells by connected area:
+	// walkable, heights and areas are per cell, row by row. areas numbers the walkable cells by connected area:
 	// a path only links cells of one area.
 	walkable    []bool
+	heights     []int8
 	areas       []int32
 	searchLimit int
 	spawn       core.Cell
@@ -25,19 +29,19 @@ type Terrain struct {
 }
 
 func NewTerrain(m Map) Terrain {
-	t := Terrain{grid: m.Grid(), walkable: walkableCells(m), searchLimit: DefaultSearchLimit}
+	t := Terrain{grid: m.Grid(), walkable: walkableCells(m), heights: cellHeights(m), searchLimit: DefaultSearchLimit}
 	t.areas = t.labelAreas()
 	t.spawn, t.spawnErr = t.closestToCenter()
 	return t
 }
 
-// walkableCells: every cell whose ground isn't void, but those with an object on them.
+// walkableCells: every cell whose ground is walkable, but those with an object on them.
 func walkableCells(m Map) []bool {
 	grid := m.Grid()
 	walkable := make([]bool, grid.Width*grid.Height)
 	for _, chunk := range m.Chunks {
 		for i, kind := range chunk.Ground {
-			if cell := chunk.cellAt(i); kind != TileVoid && grid.Contains(cell) {
+			if cell := chunk.cellAt(i); kind.Walkable() && grid.Contains(cell) {
 				walkable[grid.Index(cell)] = true
 			}
 		}
@@ -48,6 +52,20 @@ func walkableCells(m Map) []bool {
 		}
 	}
 	return walkable
+}
+
+// cellHeights: every cell's height, 0 in missing chunks.
+func cellHeights(m Map) []int8 {
+	grid := m.Grid()
+	heights := make([]int8, grid.Width*grid.Height)
+	for _, chunk := range m.Chunks {
+		for i, height := range chunk.Height {
+			if cell := chunk.cellAt(i); grid.Contains(cell) {
+				heights[grid.Index(cell)] = height
+			}
+		}
+	}
+	return heights
 }
 
 // WithSearchLimit is the same terrain with another search limit.
@@ -63,6 +81,14 @@ func (t Terrain) Grid() core.Grid {
 // IsWalkable: a cell within the map, on ground, with nothing on it.
 func (t Terrain) IsWalkable(c core.Cell) bool {
 	return t.grid.Contains(c) && t.walkable[t.grid.Index(c)]
+}
+
+// HeightAt is a cell's height within the map, 0 outside.
+func (t Terrain) HeightAt(c core.Cell) int8 {
+	if !t.grid.Contains(c) {
+		return 0
+	}
+	return t.heights[t.grid.Index(c)]
 }
 
 // SpawnPoint is the walkable cell closest to the map's center. Ties go to the lowest row, then column.
@@ -81,7 +107,7 @@ func (t Terrain) neighbor(c, d core.Cell) (core.Cell, bool) {
 }
 
 // labelAreas floods every walkable cell with the number of its area. Straight steps are enough:
-// a diagonal step needs both straight neighbors walkable, so it never links two areas.
+// a diagonal step needs both straight ways round to be steps, so it never links two areas.
 func (t Terrain) labelAreas() []int32 {
 	areas := make([]int32, len(t.walkable))
 	var next int32
@@ -101,8 +127,8 @@ func (t Terrain) flood(areas []int32, start core.Cell, area int32) {
 	areas[t.grid.Index(start)] = area
 	for queue := []core.Cell{start}; len(queue) > 0; queue = queue[1:] {
 		for _, d := range stepDirections[:4] {
-			next, ok := t.neighbor(queue[0], d)
-			if ok && t.IsWalkable(next) && areas[t.grid.Index(next)] == 0 {
+			next, ok := t.step(queue[0], d)
+			if ok && areas[t.grid.Index(next)] == 0 {
 				areas[t.grid.Index(next)] = area
 				queue = append(queue, next)
 			}

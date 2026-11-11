@@ -10,6 +10,7 @@ For a **new feature** (skip steps 1 to 3 for a fix):
 4. Code it.
 5. Run `/security-review` once coding is done.
 6. Make sure all tests pass:
-   - front: `cd front && npm run typecheck`
+   - front: `cd client && npm run typecheck`
+   - back: `cd backend && go test -race -v ./...`
 
 For a **fix**: still run `/security-review` (step 5) and make all tests pass (step 6).

@@ -83,19 +83,43 @@ func (r *Repo) chunksOf(ctx context.Context, mapID string) (map[core.ChunkKey]*d
 func (r *Repo) InsertMap(ctx context.Context, m domain.Map) (string, error) {
 	var id string
 	err := r.RunInTransaction(ctx, func(ctx context.Context, tx coreinfra.Requester) error {
-		err := tx.QueryRow(ctx, `INSERT INTO maps (slug, name, width, height, wraps) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			m.Slug, m.Name, m.Width, m.Height, m.Wraps).Scan(&id)
-		if err != nil {
-			return pg.Wrap(err, "InsertMap")
-		}
-		for _, insert := range []func(context.Context, coreinfra.Requester, string, domain.Map) error{insertRegions, insertChunks, insertObjects} {
-			if err := insert(ctx, tx, id, m); err != nil {
-				return err
-			}
-		}
-		return nil
+		var err error
+		id, err = insertMap(ctx, tx, m)
+		return err
 	})
 	return id, err
+}
+
+// ReplaceMap deletes the map of m's slug, with its chunks, regions and rocks, and saves m instead, in one
+// transaction. It returns m's new id, and whether a map was deleted.
+func (r *Repo) ReplaceMap(ctx context.Context, m domain.Map) (string, bool, error) {
+	var id string
+	var replaced bool
+	err := r.RunInTransaction(ctx, func(ctx context.Context, tx coreinfra.Requester) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM maps WHERE slug = $1`, m.Slug)
+		if err != nil {
+			return pg.Wrap(err, "ReplaceMap")
+		}
+		replaced = tag.RowsAffected() > 0
+		id, err = insertMap(ctx, tx, m)
+		return err
+	})
+	return id, replaced, err
+}
+
+func insertMap(ctx context.Context, tx coreinfra.Requester, m domain.Map) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `INSERT INTO maps (slug, name, width, height, wraps) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		m.Slug, m.Name, m.Width, m.Height, m.Wraps).Scan(&id)
+	if err != nil {
+		return "", pg.Wrap(err, "InsertMap")
+	}
+	for _, insert := range []func(context.Context, coreinfra.Requester, string, domain.Map) error{insertRegions, insertChunks, insertObjects} {
+		if err := insert(ctx, tx, id, m); err != nil {
+			return "", err
+		}
+	}
+	return id, nil
 }
 
 func insertRegions(ctx context.Context, tx coreinfra.Requester, mapID string, m domain.Map) error {

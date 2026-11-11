@@ -1,6 +1,6 @@
 import type { Chunk } from '../map/chunks';
 import { CELLS_PER_CHUNK, CHUNK_SIZE, chunkOrigin, type ChunkKey } from '../map/grid';
-import { GROUND_KINDS, OBJECT_KINDS, type GroundKind, type MapObject } from '../map/worldMap';
+import { GROUND_KINDS, MAX_HEIGHT, MIN_HEIGHT, OBJECT_KINDS, type GroundKind, type MapObject } from '../map/worldMap';
 import { isInt, isNonEmptyString, isOneOf, isRecord, type Json } from './validate';
 
 export interface Cell {
@@ -12,6 +12,8 @@ export interface Cell {
 export interface PlayerInfo extends Cell {
   id: string;
   name: string;
+  /** The slug of the robot they're drawn as; "" when the server has none (ADR 0006). */
+  robot: string;
 }
 
 /** What the server sends over the websocket (ADR 0001, ADR 0002, ADR 0003). */
@@ -29,6 +31,7 @@ export type ServerMessage =
 export interface Guest {
   id: string;
   name: string;
+  robot: string;
 }
 
 /** Decodes a server message; anything unknown or malformed gives null. */
@@ -55,7 +58,7 @@ export function encodeWalk(to: Cell): string {
 /** The websocket address of a map, on the page's own host (Vite proxies it to the back in dev). */
 export function socketUrl(page: { protocol: string; host: string }, slug: string, guest: Guest): string {
   const scheme = page.protocol === 'https:' ? 'wss' : 'ws';
-  const query = new URLSearchParams({ player: guest.id, name: guest.name });
+  const query = new URLSearchParams({ player: guest.id, name: guest.name, robot: guest.robot });
   return `${scheme}://${page.host}/api/maps/${encodeURIComponent(slug)}/ws?${query}`;
 }
 
@@ -64,7 +67,7 @@ function decodeByType(json: Record<string, unknown>): ServerMessage | null {
     case 'welcome':
       return decodeWelcome(json);
     case 'joined':
-      return isPlayerInfo(json.player) ? { type: 'joined', player: json.player } : null;
+      return isPlayerInfo(json.player) ? { type: 'joined', player: toPlayerInfo(json.player) } : null;
     case 'moved': {
       const { id } = json;
       return isNonEmptyString(id) && isCell(json) ? { type: 'moved', id, col: json.col, row: json.row } : null;
@@ -88,13 +91,13 @@ function decodeByType(json: Record<string, unknown>): ServerMessage | null {
   }
 }
 
-/** A chunk: its ground as indices into its kinds, its heights and regions, 1,024 each, and the objects on it. */
+/** A chunk: its ground as indices into its kinds, its heights (−3 to 3) and regions, 1,024 each, and the objects on it. */
 function decodeChunk(json: Json): ServerMessage | null {
   const { version, kinds, ground, height, region, objects } = json;
   if (!isChunkKey(json) || !isInt(version) || version < 1) return null;
   if (!Array.isArray(kinds) || kinds.length === 0 || !kinds.every((kind) => isOneOf(kind, GROUND_KINDS))) return null;
   const key = { cx: json.cx, cy: json.cy };
-  if (!isCellList(ground, 0, kinds.length - 1) || !isCellList(height, -128, 127) || !isCellList(region, 0, 255)) return null;
+  if (!isCellList(ground, 0, kinds.length - 1) || !isCellList(height, MIN_HEIGHT, MAX_HEIGHT) || !isCellList(region, 0, 255)) return null;
   if (!Array.isArray(objects) || !objects.every((object) => isObjectIn(object, key))) return null;
   const chunk: Chunk = {
     key,
@@ -127,11 +130,18 @@ function decodeWelcome(json: Record<string, unknown>): ServerMessage | null {
   const { you, players, stepMs } = json;
   if (!isNonEmptyString(you) || !Array.isArray(players) || !players.every(isPlayerInfo)) return null;
   if (!isInt(stepMs) || stepMs <= 0) return null;
-  return { type: 'welcome', you, players, stepMs };
+  return { type: 'welcome', you, players: players.map(toPlayerInfo), stepMs };
 }
 
-function isPlayerInfo(value: unknown): value is PlayerInfo {
+/** A player's id, name and cell are required; its robot is not. */
+function isPlayerInfo(value: unknown): value is Json & Omit<PlayerInfo, 'robot'> {
   return isRecord(value) && isNonEmptyString(value.id) && typeof value.name === 'string' && isCell(value);
+}
+
+/** A missing or malformed robot is "": the default robot is drawn. */
+function toPlayerInfo(player: Json & Omit<PlayerInfo, 'robot'>): PlayerInfo {
+  const { id, name, col, row, robot } = player;
+  return { id, name, col, row, robot: typeof robot === 'string' ? robot : '' };
 }
 
 function isPath(value: unknown): value is Cell[] {

@@ -1,12 +1,20 @@
 import type { Grid } from './grid';
 
-/** What the ground of a cell is made of. `void` is no ground at all: not drawn, not walkable. */
-export type GroundKind = 'grass' | 'void';
+/**
+ * What the ground of a cell is made of (ADR 0007, ADR 0008). `void` is no ground at all: not drawn, not walkable. Water,
+ * the ocean and holes are drawn but not walkable; grass and bridges are walkable.
+ */
+export type GroundKind = 'grass' | 'water' | 'hole' | 'bridge' | 'ocean' | 'void';
 /** The ground kinds that are drawn. */
 export type DrawnGroundKind = Exclude<GroundKind, 'void'>;
+/** The ground kinds baked into a chunk's ground texture: water has a layer of its own, under it. The ocean is still, so it's baked (ADR 0008). */
+export type BakedGroundKind = Exclude<DrawnGroundKind, 'water'>;
 export type ObjectKind = 'rock';
 
-export const GROUND_KINDS: readonly GroundKind[] = ['grass', 'void'];
+export const GROUND_KINDS: readonly GroundKind[] = ['grass', 'water', 'hole', 'bridge', 'ocean', 'void'];
+/** A cell's height, in levels (ADR 0007). */
+export const MIN_HEIGHT = -3;
+export const MAX_HEIGHT = 3;
 export const OBJECT_KINDS: readonly ObjectKind[] = ['rock'];
 
 /** Something standing on a cell of the map. */

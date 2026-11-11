@@ -14,9 +14,10 @@ var stepDirections = [8]core.Cell{
 }
 
 // Path is the shortest walk from `from` to `to` (A*), the start excluded and the target included.
-// A straight step costs 1, a diagonal one √2, and a diagonal step needs both cells beside it walkable:
-// no cutting a rock's corner. On a wrapping map, paths go across the seams. Nil when `to` is `from`, isn't
-// walkable, can't be reached, or needs exploring more cells than the search limit.
+// A straight step costs 1, a diagonal one √2, climbing or not. Each step goes up or down MaxClimb levels at most,
+// and a diagonal step needs both straight ways round to be steps: no cutting the corner of a rock, a hole, the river
+// or a cliff. On a wrapping map, paths go across the seams. Nil when `to` is `from`, isn't walkable, can't be
+// reached, or needs exploring more cells than the search limit.
 func (t Terrain) Path(from, to core.Cell) []core.Cell {
 	if from == to || !t.sameArea(from, to) {
 		return nil
@@ -43,23 +44,36 @@ func (t Terrain) Path(from, to core.Cell) []core.Cell {
 func (t Terrain) steps(c core.Cell) []core.Cell {
 	steps := make([]core.Cell, 0, len(stepDirections))
 	for _, d := range stepDirections {
-		next, ok := t.neighbor(c, d)
-		if !ok || !t.IsWalkable(next) {
-			continue
+		if next, ok := t.step(c, d); ok {
+			steps = append(steps, next)
 		}
-		diagonal := d.Col != 0 && d.Row != 0
-		if diagonal && (!t.walkableStep(c, core.Cell{Col: d.Col}) || !t.walkableStep(c, core.Cell{Row: d.Row})) {
-			continue
-		}
-		steps = append(steps, next)
 	}
 	return steps
 }
 
-// walkableStep: the cell one step `d` from c is walkable.
-func (t Terrain) walkableStep(c, d core.Cell) bool {
+// step is the cell one step `d` from c, when a walker may step on it. A diagonal step also needs both straight ways
+// round to be steps.
+func (t Terrain) step(c, d core.Cell) (core.Cell, bool) {
 	next, ok := t.neighbor(c, d)
-	return ok && t.IsWalkable(next)
+	if !ok || !t.canStep(c, next) {
+		return core.Cell{}, false
+	}
+	if d.Col == 0 || d.Row == 0 {
+		return next, true
+	}
+	return next, t.goesRound(c, next, core.Cell{Col: d.Col}) && t.goesRound(c, next, core.Cell{Row: d.Row})
+}
+
+// canStep: b, a neighbor of a, is walkable and at most MaxClimb levels up or down from a.
+func (t Terrain) canStep(a, b core.Cell) bool {
+	climb := int(t.HeightAt(b)) - int(t.HeightAt(a))
+	return t.IsWalkable(b) && climb <= MaxClimb && climb >= -MaxClimb
+}
+
+// goesRound: from c, the straight step `side`, then on to `to`, are both steps.
+func (t Terrain) goesRound(c, to, side core.Cell) bool {
+	beside, ok := t.neighbor(c, side)
+	return ok && t.canStep(c, beside) && t.canStep(beside, to)
 }
 
 // StepCost is 1 for a straight step, √2 for a diagonal one. Across a seam too: a diagonal step changes both the

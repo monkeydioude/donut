@@ -10,7 +10,7 @@ type Chunk struct {
 	// Version goes up each time the chunk changes, from 1.
 	Version int
 	Ground  [core.CellsPerChunk]TileKind
-	// Height is 0 everywhere for now: walking and drawing on heights come later (ADR 0003).
+	// Height is in levels, from MinHeight to MaxHeight (ADR 0007).
 	Height [core.CellsPerChunk]int8
 	// Region is the id of each cell's region, 0 for none.
 	Region [core.CellsPerChunk]uint8
@@ -45,6 +45,8 @@ func (c *Chunk) validate(regions map[uint8]bool) error {
 		switch {
 		case !c.Ground[i].Known():
 			return invalid("chunk %v, cell %v: unknown ground code %d", c.Key, c.cellAt(i), c.Ground[i])
+		case c.Height[i] < MinHeight || c.Height[i] > MaxHeight:
+			return invalid("chunk %v, cell %v: height %d is outside %d to %d", c.Key, c.cellAt(i), c.Height[i], MinHeight, MaxHeight)
 		case !regions[c.Region[i]]:
 			return invalid("chunk %v, cell %v: unknown region %d", c.Key, c.cellAt(i), c.Region[i])
 		}

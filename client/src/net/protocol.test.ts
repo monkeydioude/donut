@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeServerMessage, encodePlan, encodeWalk, socketUrl } from './protocol';
 
-const ann = { id: 'a', name: 'Ann', col: 1, row: 2 };
+const ann = { id: 'a', name: 'Ann', robot: 'dome-head', col: 1, row: 2 };
 
 // ADR 0001 test 22, ADR 0002 test 18
 describe('decodeServerMessage', () => {
@@ -75,6 +75,18 @@ describe('chunk messages', () => {
     expect(message.chunk.objects).toEqual([{ id: 'r1', kind: 'rock', col: 70, row: 40 }]);
   });
 
+  // ADR 0007 test 26
+  it('decode water, holes, bridges, the ocean and heights from -3 to 3', () => {
+    const chunk = serverChunk();
+    chunk.kinds = ['grass', 'water', 'hole', 'bridge', 'ocean'];
+    chunk.ground = Array.from({ length: 1024 }, (_, i) => i % 4);
+    chunk.height = Array.from({ length: 1024 }, (_, i) => (i % 7) - 3);
+    const message = decodeServerMessage(JSON.stringify(chunk));
+    if (message?.type !== 'chunk') throw new Error('not a chunk');
+    expect(message.chunk.ground.slice(0, 4)).toEqual(['grass', 'water', 'hole', 'bridge']);
+    expect(message.chunk.height.slice(0, 7)).toEqual([-3, -2, -1, 0, 1, 2, 3]);
+  });
+
   it('decode a forget', () => {
     expect(decodeServerMessage('{"type": "forget", "cx": 2, "cy": 1}')).toEqual({ type: 'forget', cx: 2, cy: 1 });
   });
@@ -86,7 +98,8 @@ describe('chunk messages', () => {
     'an unknown kind': (c) => (c.kinds = ['grass', 'lava']),
     'no kinds': (c) => (c.kinds = []),
     'a region over 255': (c) => ((c.region as number[])[0] = 256),
-    'a height out of a byte': (c) => ((c.height as number[])[0] = -129),
+    'a height of 4 (ADR 0007)': (c) => ((c.height as number[])[0] = 4),
+    'a height of -4 (ADR 0007)': (c) => ((c.height as number[])[0] = -4),
     'an object outside its chunk': (c) => (c.objects = [{ id: 'r1', kind: 'rock', col: 96, row: 40 }]),
     'an object of an unknown kind': (c) => (c.objects = [{ id: 't1', kind: 'tree', col: 70, row: 40 }]),
     'a negative chunk': (c) => (c.cx = -1),
@@ -112,12 +125,37 @@ describe('encodePlan and encodeWalk', () => {
   });
 });
 
-describe('socketUrl', () => {
-  const guest = { id: 'a-b', name: 'Guest 12&' };
+// ADR 0006 test 26
+describe('a player\'s robot', () => {
+  const decodedRobot = (player: Record<string, unknown>) => {
+    const message = decodeServerMessage(JSON.stringify({ type: 'joined', player }));
+    return message?.type === 'joined' ? message.player.robot : null;
+  };
 
-  it('opens the websocket on the page host, ws or wss like the page', () => {
+  it('is decoded when it is a string', () => {
+    expect(decodedRobot(ann)).toBe('dome-head');
+  });
+
+  it('is "" when it is missing or not a string', () => {
+    const { robot: _, ...noRobot } = ann;
+    expect(decodedRobot(noRobot)).toBe('');
+    expect(decodedRobot({ ...ann, robot: 7 })).toBe('');
+    expect(decodedRobot({ ...ann, robot: null })).toBe('');
+  });
+
+  it('is "" in a welcome too, and nothing else is kept from the player', () => {
+    const message = decodeServerMessage(JSON.stringify({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', col: 1, row: 2, extra: 1 }], stepMs: 200 }));
+    expect(message).toEqual({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 1, row: 2 }], stepMs: 200 });
+  });
+});
+
+// ADR 0006 test 25
+describe('socketUrl', () => {
+  const guest = { id: 'a-b', name: 'Guest 12&', robot: 'dome-head' };
+
+  it('opens the websocket on the page host, ws or wss like the page, with your robot', () => {
     expect(socketUrl({ protocol: 'http:', host: 'localhost:5180' }, 'meadow', guest)).toBe(
-      'ws://localhost:5180/api/maps/meadow/ws?player=a-b&name=Guest+12%26',
+      'ws://localhost:5180/api/maps/meadow/ws?player=a-b&name=Guest+12%26&robot=dome-head',
     );
     expect(socketUrl({ protocol: 'https:', host: 'donut.example' }, 'meadow', guest)).toMatch(/^wss:\/\/donut\.example\//);
   });

@@ -1,4 +1,7 @@
 // Donut API server: the maps and their layers over HTTP, the players on a map over a websocket.
+//
+//	donut                    serves
+//	donut reset-map <slug>   replaces a map in the database with its file (ADR 0007), the server stopped
 package main
 
 import (
@@ -18,6 +21,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/oklog/run"
 
+	"donut/internal/worldmap"
+	"donut/mapfiles"
 	"donut/migrations"
 	"donut/pkg/db"
 	"donut/pkg/logs"
@@ -29,8 +34,6 @@ type Config struct {
 	DBURL   string `env:"DB_URL,?postgres://donut:donut@localhost:5434/donut?search_path=donut"`
 	// FrontOrigin is where the client is served from: browsers there may open the websocket.
 	FrontOrigin string `env:"FRONT_ORIGIN,?http://localhost:5180"`
-	// StarterMapSeed generates the starter world, the first time the server boots on an empty database.
-	StarterMapSeed int `env:"STARTER_MAP_SEED,?42"`
 	// LogLevel is debug (every action, every query), info, warn or error.
 	LogLevel string `env:"LOG_LEVEL,?debug"`
 }
@@ -53,14 +56,6 @@ func (c Config) OriginPatterns() ([]string, error) {
 	return []string{u.Host}, nil
 }
 
-// Seed is STARTER_MAP_SEED, which must not be negative.
-func (c Config) Seed() (uint64, error) {
-	if c.StarterMapSeed < 0 {
-		return 0, fmt.Errorf("STARTER_MAP_SEED %d is negative", c.StarterMapSeed)
-	}
-	return uint64(c.StarterMapSeed), nil
-}
-
 func main() {
 	// .env lives at the repo root; missing is fine, every value has a default.
 	_ = godotenv.Load("../.env", ".env")
@@ -73,33 +68,36 @@ func main() {
 		log.Fatal(err.Error())
 	}
 	slog.SetDefault(logger) // for libraries that log on their own
-	if err := serve(context.Background(), config, logger); err != nil {
+	if err := runCommand(context.Background(), os.Args[1:], config, logger); err != nil {
 		log.Fatal(err.Error())
 	}
+}
+
+// runCommand serves without arguments, or replaces a map with its file for `reset-map <slug>`.
+func runCommand(ctx context.Context, args []string, config Config, log *slog.Logger) error {
+	switch {
+	case len(args) == 0:
+		return serve(ctx, config, log)
+	case len(args) == 2 && args[0] == "reset-map":
+		return resetMap(ctx, config, args[1], log)
+	}
+	return errors.New("usage: donut [reset-map <slug>]")
 }
 
 // serve opens the database, migrates it, makes sure a map exists, then answers until SIGINT or SIGTERM.
 func serve(ctx context.Context, config Config, log *slog.Logger) error {
 	log.Info("donut API booting", "port", config.APIPort, "db", config.RedactedDBURL(), "front_origin", config.FrontOrigin,
-		"starter_map_seed", config.StarterMapSeed, "log_level", config.LogLevel)
-	seed, err := config.Seed()
-	if err != nil {
-		return err
-	}
-	pool, err := db.Open(ctx, config.DBURL, log)
+		"log_level", config.LogLevel)
+	pool, err := openDatabase(ctx, config, log)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	log.Debug("database connected")
-	if err := migrateAtBoot(ctx, pool, log); err != nil {
-		return err
-	}
 	handler, maps, err := routing(ctx, pool, config, log)
 	if err != nil {
 		return err
 	}
-	if _, err := maps.Service.EnsureStarterMap(ctx, seed); err != nil {
+	if _, err := maps.Service.EnsureStarterMap(ctx, mapfiles.Read); err != nil {
 		return err
 	}
 	return listen(ctx, &http.Server{
@@ -109,6 +107,32 @@ func serve(ctx context.Context, config Config, log *slog.Logger) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}, log)
+}
+
+// resetMap replaces a map in the database with the file built into the server. Run it with the server stopped: an
+// open room keeps the map it loaded.
+func resetMap(ctx context.Context, config Config, slug string, log *slog.Logger) error {
+	log.Info("donut reset-map", "slug", slug, "db", config.RedactedDBURL())
+	pool, err := openDatabase(ctx, config, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	return worldmap.NewModule(pool, log).Service.ResetMap(ctx, slug, mapfiles.Read)
+}
+
+// openDatabase connects and migrates. The caller closes the pool.
+func openDatabase(ctx context.Context, config Config, log *slog.Logger) (*pgxpool.Pool, error) {
+	pool, err := db.Open(ctx, config.DBURL, log)
+	if err != nil {
+		return nil, err
+	}
+	log.Debug("database connected")
+	if err := migrateAtBoot(ctx, pool, log); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
 }
 
 func migrateAtBoot(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {

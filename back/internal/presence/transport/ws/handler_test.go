@@ -153,7 +153,11 @@ func TestEveryActionIsLoggedWithoutTheGuestID(t *testing.T) {
 
 func dial(t *testing.T, server *httptest.Server, slug, player, name, origin string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
-	query := url.Values{"player": {player}, "name": {name}}
+	return dialQuery(t, server, slug, url.Values{"player": {player}, "name": {name}}, origin)
+}
+
+func dialQuery(t *testing.T, server *httptest.Server, slug string, query url.Values, origin string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
 	address := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/maps/" + slug + "/ws?" + query.Encode()
 	conn, res, err := websocket.Dial(context.Background(), address, &websocket.DialOptions{
 		HTTPHeader: http.Header{"Origin": {origin}},
@@ -216,13 +220,13 @@ func movedJSON(id string, col, row int) map[string]any {
 	return map[string]any{"type": "moved", "id": id, "col": float64(col), "row": float64(row)}
 }
 
-// ADR 0002 test 15, and ADR 0001 test 19
+// ADR 0002 test 15, ADR 0001 test 19, and ADR 0006 test 5: no robot is sent as ""
 func TestPlayersSeeEachOtherJoinWalkAndLeave(t *testing.T) {
 	server := newServer(t)
 	bobConn := join(t, server, bob, "Bob")
 	annConn := join(t, server, ann, "Ann")
 	assert.Equal(t, map[string]any{
-		"type": "joined", "player": map[string]any{"id": annPublic, "name": "Ann", "col": 2.0, "row": 2.0},
+		"type": "joined", "player": map[string]any{"id": annPublic, "name": "Ann", "robot": "", "col": 2.0, "row": 2.0},
 	}, read(t, bobConn))
 
 	write(t, annConn, `{"type": "plan", "col": 4, "row": 2}`)
@@ -287,6 +291,40 @@ func TestRefusedBeforeTheUpgrade(t *testing.T) {
 			assert.Equal(t, c.status, res.StatusCode)
 		})
 	}
+}
+
+// ADR 0006 test 4
+func TestAMalformedRobotIsRefusedBeforeTheUpgrade(t *testing.T) {
+	server := newServer(t)
+	for _, robot := range []string{"Dome", "dome head", "<b>", strings.Repeat("a", 33)} {
+		query := url.Values{"player": {ann}, "name": {"Ann"}, "robot": {robot}}
+		_, res, err := dialQuery(t, server, "meadow", query, front)
+		require.Error(t, err, robot)
+		require.NotNil(t, res, robot)
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode, robot)
+	}
+}
+
+// ADR 0006 test 6
+func TestWelcomeAndJoinedCarryTheRobots(t *testing.T) {
+	server := newServer(t)
+	bobConn, _, err := dialQuery(t, server, "meadow", url.Values{"player": {bob}, "name": {"Bob"}, "robot": {"rusty-toy"}}, front)
+	require.NoError(t, err)
+	read(t, bobConn) // welcome
+	read(t, bobConn) // chunk
+
+	annConn, _, err := dialQuery(t, server, "meadow", url.Values{"player": {ann}, "name": {"Ann"}, "robot": {"dome-head"}}, front)
+	require.NoError(t, err)
+
+	robots := map[string]any{}
+	for _, p := range read(t, annConn)["players"].([]any) {
+		player := p.(map[string]any)
+		robots[player["name"].(string)] = player["robot"]
+	}
+	assert.Equal(t, map[string]any{"Ann": "dome-head", "Bob": "rusty-toy"}, robots)
+	joined := read(t, bobConn)
+	assert.Equal(t, "joined", joined["type"])
+	assert.Equal(t, "dome-head", joined["player"].(map[string]any)["robot"])
 }
 
 // ADR 0002 test 16, and ADR 0001 test 21

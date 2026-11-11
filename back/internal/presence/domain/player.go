@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -19,22 +20,36 @@ import (
 
 const (
 	MaxNameLength = 24
+	// MaxRobotLength bounds a robot's slug (ADR 0006).
+	MaxRobotLength = 32
 	// StepInterval is the time of one step: everyone walks at this pace.
 	StepInterval = 200 * time.Millisecond
 	// TickInterval is how often a room moves its walkers.
 	TickInterval = 50 * time.Millisecond
 )
 
+// robotSlug is a robot's slug: lowercase letters, digits and dashes. The server doesn't know the list of robots.
+var robotSlug = regexp.MustCompile(fmt.Sprintf(`^[a-z0-9-]{1,%d}$`, MaxRobotLength))
+
 var (
 	ErrNotNeighbor = errors.New("the next cell is not one of the 8 cells around the player")
 	ErrNotWalkable = errors.New("the next cell is not walkable")
 )
 
-// Player is someone on a map. Its ID is the public id of the guest id the client keeps.
-type Player struct {
+// Profile is who someone is, as the others see them: their public id, name and robot.
+type Profile struct {
 	ID   string
 	Name string
-	Cell core.Cell
+	// Robot is the slug of the robot they're drawn as; "" for the default one (ADR 0006).
+	Robot string
+}
+
+// Player is someone on a map. Its ID is the public id of the guest id the client keeps.
+type Player struct {
+	ID    string
+	Name  string
+	Robot string
+	Cell  core.Cell
 }
 
 // PublicID is the id other players see. The guest id is a secret: whoever sends it plays that player,
@@ -61,6 +76,14 @@ func CleanName(raw string) (string, error) {
 		return "", fmt.Errorf("a name has 1 to %d printable characters: %w", MaxNameLength, errd.ErrBadRequest)
 	}
 	return name, nil
+}
+
+// CleanRobot checks a robot's slug: empty, or 1 to MaxRobotLength lowercase letters, digits or dashes.
+func CleanRobot(raw string) (string, error) {
+	if raw != "" && !robotSlug.MatchString(raw) {
+		return "", fmt.Errorf("a robot is 1 to %d lowercase letters, digits or dashes: %w", MaxRobotLength, errd.ErrBadRequest)
+	}
+	return raw, nil
 }
 
 // CheckStep tells why a walker on `from` may not step to `to` now, nil when it may. A step may cross the seams of a

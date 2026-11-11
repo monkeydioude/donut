@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { PlayerInfo } from '../net/protocol';
 import { applyMessage, emptyPlayers, ownPlayer, type PlayersState } from './players';
 
-const ann: PlayerInfo = { id: 'a', name: 'Ann', col: 2, row: 2 };
-const bob: PlayerInfo = { id: 'b', name: 'Bob', col: 3, row: 3 };
+const ann: PlayerInfo = { id: 'a', name: 'Ann', robot: 'dome-head', col: 2, row: 2 };
+const bob: PlayerInfo = { id: 'b', name: 'Bob', robot: 'rusty-toy', col: 3, row: 3 };
 
 const welcomed = (): PlayersState =>
   applyMessage(emptyPlayers(), { type: 'welcome', you: 'a', players: [ann, bob], stepMs: 250 });
@@ -20,7 +20,7 @@ describe('applyMessage', () => {
   });
 
   it('joined, moved and left follow the others', () => {
-    const carl: PlayerInfo = { id: 'c', name: 'Carl', col: 0, row: 0 };
+    const carl: PlayerInfo = { id: 'c', name: 'Carl', robot: '', col: 0, row: 0 };
     let state = applyMessage(welcomed(), { type: 'joined', player: carl });
     expect(list(state)).toContainEqual(carl);
 

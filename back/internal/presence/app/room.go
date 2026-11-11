@@ -81,14 +81,16 @@ func (r *Room) Run(ctx context.Context, every time.Duration) {
 
 // Join puts a player on the map, welcomes them and sends them the chunks around them; the players who see them learn
 // they joined. A player already there (another tab, a refresh) keeps their place and walk: the old connection is
-// closed, and the new one gets everything again.
-func (r *Room) Join(id, name string, client Client) error {
+// closed, and the new one gets everything again. They keep the name and robot of their first connection.
+func (r *Room) Join(who domain.Profile, client Client) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer r.dropSlow()
 
+	id := who.ID
 	if existing, ok := r.members[id]; ok {
-		r.log.Debug("join: player already here, old connection replaced", "player", id, "name", name, "cell", existing.player.Cell, "walking", len(existing.path))
+		r.log.Debug("join: player already here, old connection replaced", "player", id, "name", who.Name, "robot", who.Robot,
+			"kept_robot", existing.player.Robot, "cell", existing.player.Cell, "walking", len(existing.path))
 		existing.client.Close()
 		existing.client = client
 		existing.held = domain.HeldChunks{}
@@ -100,10 +102,10 @@ func (r *Room) Join(id, name string, client Client) error {
 		r.log.Warn("join: no cell to spawn on", "player", id, "error", err)
 		return fmt.Errorf("Join: %w", err)
 	}
-	joiner := &member{player: domain.Player{ID: id, Name: name, Cell: cell}, client: client, held: domain.HeldChunks{},
-		limiter: domain.NewRequestLimiter(r.now())}
+	joiner := &member{player: domain.Player{ID: id, Name: who.Name, Robot: who.Robot, Cell: cell}, client: client,
+		held: domain.HeldChunks{}, limiter: domain.NewRequestLimiter(r.now())}
 	r.members[id] = joiner
-	r.log.Debug("join", "player", id, "name", name, "cell", cell, "chunk", core.ChunkOf(cell), "back_where_they_left", returning, "players", len(r.members))
+	r.log.Debug("join", "player", id, "name", who.Name, "robot", who.Robot, "cell", cell, "chunk", core.ChunkOf(cell), "back_where_they_left", returning, "players", len(r.members))
 	r.welcome(joiner)
 	for _, other := range r.others(id) {
 		if other.held.Sees(cell) {

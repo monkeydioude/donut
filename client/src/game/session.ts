@@ -1,5 +1,5 @@
 import type { TilePoint } from '../iso/projection';
-import { emptyChunks, isHeld, regionAt, withChunk, withoutChunk, type HeldChunks } from '../map/chunks';
+import { emptyChunks, isHeld, regionAt, withChunk, withoutChunk, type HeldChunks, type HeldChunksRef } from '../map/chunks';
 import { regionName, type MapDescription } from '../map/worldMap';
 import type { GameSocket, GameSocketHandlers } from '../net/gameSocket';
 import type { ServerMessage } from '../net/protocol';
@@ -7,7 +7,7 @@ import type { ChunksView } from '../render/chunkView';
 import type { OverlayView } from '../render/overlay';
 import type { PlayersView } from '../render/playersView';
 import type { RegionBanner } from '../ui/banner';
-import type { PointerHandlers } from '../ui/pointer';
+import type { PointerHandlers, PointerListener } from '../ui/pointer';
 import { silent, type Log } from '../debug/log';
 import { enterRegion, initialBanner } from './banner';
 import { applyCommand, canMove, initialCommand, shownPath, type CommandEvent, type CommandState } from './command';
@@ -28,23 +28,36 @@ export interface PlayersSessionDeps {
   map: MapDescription;
   socketUrl: string;
   openSocket: (url: string, handlers: GameSocketHandlers) => GameSocket;
-  /** Calls the handlers on hovers, clicks and cancels; returns a function that stops. */
-  listenToPointer: (handlers: PointerHandlers) => () => void;
+  /** Calls the handlers on hovers, clicks and cancels. */
+  listenToPointer: (handlers: PointerHandlers) => PointerListener;
   createMenu: (choices: MenuChoices) => CommandMenu;
   players: PlayersView;
   chunks: ChunksView;
   overlay: OverlayView;
   banner: RegionBanner;
+  /** Where the session keeps the chunks held, for the views drawing on heights to read. */
+  held?: HeldChunksRef;
   onDisconnect: () => void;
   now?: () => number;
   log?: Log;
 }
 
+/** What the map shows of the session (ADR 0005): your cell, the other players you see, your region. */
+export interface Whereabouts {
+  you: TilePoint | null;
+  others: TilePoint[];
+  /** Your cell's region id, 0 for none; null before your chunk comes. */
+  region: number | null;
+}
+
 export interface PlayersSession {
   /** Redraws the borders, path and menu: after the view moved, for instance. */
   refresh(): void;
-  /** Keeps the menu beside its tile while the camera moves: every frame. */
+  /** Keeps the hover under the pointer and the menu beside its tile while the camera moves: every frame. */
   followCamera(): void;
+  /** Cancels the selection, as the right click does. */
+  cancel(): void;
+  whereabouts(): Whereabouts;
   leave(): void;
 }
 
@@ -57,23 +70,25 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
   const now = deps.now ?? (() => performance.now());
   let players = emptyPlayers();
   let command = initialCommand();
-  let held: HeldChunks = emptyChunks();
+  const heldRef: HeldChunksRef = deps.held ?? { current: emptyChunks() };
   let banner = initialBanner();
 
   const applyChunks = (message: ServerMessage) => {
     if (message.type === 'chunk') {
-      held = withChunk(held, message.chunk);
+      heldRef.current = withChunk(heldRef.current, message.chunk);
       deps.chunks.show(message.chunk);
+      // players drawn before their chunk came stand at height 0 until now
+      deps.players.relift();
     } else if (message.type === 'forget') {
-      held = withoutChunk(held, message);
+      heldRef.current = withoutChunk(heldRef.current, message);
       deps.chunks.forget(message);
     } else return;
-    log(`chunks after ${message.type}`, { held: held.size });
+    log(`chunks after ${message.type}`, { held: heldRef.current.size });
   };
   // the region banner, once your cell's region is known and each time it changes
   const updateBanner = () => {
     const own = ownPlayer(players);
-    const next = enterRegion(banner, own ? regionAt(held, own) : null, now());
+    const next = enterRegion(banner, own ? regionAt(heldRef.current, own) : null, now());
     banner = next.state;
     if (next.show === null) return;
     const name = regionName(deps.map, next.show);
@@ -132,10 +147,10 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
     },
   });
   // only the cells of chunks you hold can be pointed at: the others aren't drawn
-  const stopPointer = deps.listenToPointer({
-    hover: (cell) => dispatch({ type: 'hover', cell: cell && isHeld(held, cell) ? cell : null }),
+  const pointer = deps.listenToPointer({
+    hover: (cell) => dispatch({ type: 'hover', cell: cell && isHeld(heldRef.current, cell) ? cell : null }),
     select: (cell) => {
-      if (!isHeld(held, cell)) {
+      if (!isHeld(heldRef.current, cell)) {
         log('click on a chunk not held: cancel', cell);
         dispatch({ type: 'cancel' });
         return;
@@ -157,14 +172,24 @@ export function startPlayersSession(deps: PlayersSessionDeps): PlayersSession {
   return {
     refresh: render,
     followCamera: () => {
+      pointer.repick();
       if (command.selection) menu.show(command.selection.cell, canMove(command));
     },
+    cancel: () => dispatch({ type: 'cancel' }),
+    whereabouts: () => whereaboutsOf(players, heldRef.current),
     leave: () => {
       log('leaving');
-      stopPointer();
+      pointer.stop();
       socket.close();
     },
   };
+}
+
+/** Your cell and region, and the cells of the other players you see: those on the chunks you hold. */
+export function whereaboutsOf(players: PlayersState, held: HeldChunks): Whereabouts {
+  const own = ownPlayer(players);
+  const others = [...players.players.values()].filter((p) => p.id !== players.you).map(({ col, row }) => ({ col, row }));
+  return { you: own && { col: own.col, row: own.row }, others, region: own ? regionAt(held, own) : null };
 }
 
 /** The command state in a few words, for the logs. */

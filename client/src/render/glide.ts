@@ -1,4 +1,5 @@
-import type { IsoProjection, ScreenPoint, TilePoint } from '../iso/projection';
+import { groundCenterAt, type Heights } from '../iso/heights';
+import type { ScreenPoint, TilePoint } from '../iso/projection';
 import { nearestCopy, type Grid } from '../map/grid';
 
 /** A sprite going from one world position to another in a straight line, at a fixed pace. */
@@ -24,16 +25,30 @@ export function nextGlide(previous: Glide | undefined, to: ScreenPoint, arrival:
   return { from: glideAt(previous, now), to, startedAt: now, durationMs };
 }
 
-/** A player sprite's glide and draw order, going to `cell`. The draw order is the target cell's, at once. */
+/**
+ * A player sprite's glide and draw order, going to `cell` at its height: a step between levels rises or drops on the
+ * way. The draw order is the target cell's, at once.
+ */
 export function placePlayer(
   previous: Glide | undefined,
   cell: TilePoint,
+  height: number,
   arrival: Arrival,
   now: number,
   stepMs: number,
-  projection: IsoProjection,
+  heights: Heights,
 ): { glide: Glide; zIndex: number } {
-  return { glide: nextGlide(previous, projection.toScreen(cell), arrival, now, stepMs), zIndex: projection.depth(cell) };
+  return { glide: nextGlide(previous, groundCenterAt(heights, cell, height), arrival, now, stepMs), zIndex: heights.projection.depth(cell) };
+}
+
+/**
+ * The glide going on from where the sprite is to another end, in the time it had left: the target's height became
+ * known. Over already, it's there at once.
+ */
+export function retarget(glide: Glide, to: ScreenPoint, now: number): Glide {
+  const left = glide.startedAt + glide.durationMs - now;
+  if (left <= 0) return { from: to, to, startedAt: now, durationMs: 0 };
+  return { from: glideAt(glide, now), to, startedAt: now, durationMs: left };
 }
 
 /**

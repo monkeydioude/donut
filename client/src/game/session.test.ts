@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { TilePoint } from '../iso/projection';
-import type { Chunk } from '../map/chunks';
+import type { Chunk, HeldChunksRef } from '../map/chunks';
 import type { GameSocketHandlers } from '../net/gameSocket';
 import type { Cell } from '../net/protocol';
 import type { PointerHandlers } from '../ui/pointer';
+import { emptyChunks } from '../map/chunks';
+import { emptyPlayers } from './players';
 import type { MenuChoices } from './session';
-import { startPlayersSession } from './session';
+import { startPlayersSession, whereaboutsOf } from './session';
 
 /** Chunk (0, 0) of the map, all grass, in region 1. */
 function chunk(region = 1): Chunk {
   return { key: { cx: 0, cy: 0 }, version: 1, ground: Array(1024).fill('grass'), height: Array(1024).fill(0), region: Array(1024).fill(region), objects: [] };
 }
 
-function setup() {
+function setup(held?: HeldChunksRef) {
   const sent: { type: 'plan' | 'walk'; to: Cell }[] = [];
   const menu: { shown: { cell: TilePoint; moveEnabled: boolean } | null } = { shown: null };
   const drawn: { path: readonly TilePoint[]; hover: TilePoint | null; chunks: string[]; banners: string[] } = {
@@ -25,7 +27,7 @@ function setup() {
   let pointer: PointerHandlers | undefined;
   let choices: MenuChoices | undefined;
   let disconnected = false;
-  startPlayersSession({
+  const playing = startPlayersSession({
     map: { slug: 'world', name: 'World', width: 160, height: 160, wraps: true, chunkSize: 32, regions: [{ id: 1, name: 'Sprinkle Meadow', biome: 'meadow' }] },
     socketUrl: 'ws://test',
     openSocket: (_url, handlers) => {
@@ -34,13 +36,13 @@ function setup() {
     },
     listenToPointer: (handlers) => {
       pointer = handlers;
-      return () => {};
+      return { repick: () => {}, stop: () => {} };
     },
     createMenu: (c) => {
       choices = c;
       return { show: (cell, moveEnabled) => (menu.shown = { cell, moveEnabled }), hide: () => (menu.shown = null) };
     },
-    players: { sync: () => {}, ownPosition: () => null, ownCell: () => ({ col: 2, row: 2 }) },
+    players: { sync: () => {}, ownPosition: () => null, ownCell: () => ({ col: 2, row: 2 }), relift: () => drawn.chunks.push('relift') },
     chunks: {
       show: (c) => drawn.chunks.push(`show ${c.key.cx},${c.key.cy}`),
       forget: (key) => drawn.chunks.push(`forget ${key.cx},${key.cy}`),
@@ -48,12 +50,13 @@ function setup() {
     },
     overlay: { showHover: (cell) => (drawn.hover = cell), showSelection: () => {}, showPath: (path) => (drawn.path = path) },
     banner: { show: (name) => drawn.banners.push(name) },
+    ...(held ? { held } : {}),
     onDisconnect: () => (disconnected = true),
     now: () => 0,
   });
-  socket!.onMessage({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', col: 2, row: 2 }], stepMs: 200 });
+  socket!.onMessage({ type: 'welcome', you: 'a', players: [{ id: 'a', name: 'Ann', robot: '', col: 2, row: 2 }], stepMs: 200 });
   socket!.onMessage({ type: 'chunk', chunk: chunk() });
-  return { sent, menu, drawn, socket: socket!, pointer: pointer!, choices: choices!, isDisconnected: () => disconnected };
+  return { playing, sent, menu, drawn, socket: socket!, pointer: pointer!, choices: choices!, isDisconnected: () => disconnected };
 }
 
 const tile = { col: 4, row: 2 };
@@ -102,7 +105,17 @@ describe('startPlayersSession', () => {
   it('draws the chunks that come and drops the forgotten ones', () => {
     const session = setup();
     session.socket.onMessage({ type: 'forget', cx: 0, cy: 0 });
-    expect(session.drawn.chunks).toEqual(['follow', 'show 0,0', 'forget 0,0']);
+    expect(session.drawn.chunks).toEqual(['follow', 'show 0,0', 'relift', 'forget 0,0']);
+  });
+
+  // ADR 0007: the views read the heights of the chunks held
+  it('keeps the chunks held where the views read them, and lifts the players once a chunk comes', () => {
+    const held = { current: emptyChunks() };
+    const session = setup(held);
+    expect(held.current.size).toBe(1);
+    expect(session.drawn.chunks.indexOf('relift')).toBe(session.drawn.chunks.indexOf('show 0,0') + 1);
+    session.socket.onMessage({ type: 'forget', cx: 0, cy: 0 });
+    expect(held.current.size).toBe(0);
   });
 
   it('only points at the cells of chunks you hold', () => {
@@ -127,5 +140,26 @@ describe('startPlayersSession', () => {
     const session = setup();
     session.socket.onClose();
     expect(session.isDisconnected()).toBe(true);
+  });
+});
+
+// ADR 0005 test 19
+describe('whereabouts', () => {
+  it('gives your cell, the other players you see, and your region', () => {
+    const session = setup();
+    session.socket.onMessage({ type: 'joined', player: { id: 'b', name: 'Bob', robot: '', col: 7, row: 9 } });
+    expect(session.playing.whereabouts()).toEqual({ you: { col: 2, row: 2 }, others: [{ col: 7, row: 9 }], region: 1 });
+  });
+
+  it('follows your steps and the players leaving', () => {
+    const session = setup();
+    session.socket.onMessage({ type: 'joined', player: { id: 'b', name: 'Bob', robot: '', col: 7, row: 9 } });
+    session.socket.onMessage({ type: 'moved', id: 'a', col: 3, row: 2 });
+    session.socket.onMessage({ type: 'left', id: 'b' });
+    expect(session.playing.whereabouts()).toEqual({ you: { col: 3, row: 2 }, others: [], region: 1 });
+  });
+
+  it('gives nothing before the welcome', () => {
+    expect(whereaboutsOf(emptyPlayers(), emptyChunks())).toEqual({ you: null, others: [], region: null });
   });
 });

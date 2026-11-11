@@ -16,10 +16,11 @@ type cellOut struct {
 }
 
 type playerOut struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Col  int    `json:"col"`
-	Row  int    `json:"row"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Robot string `json:"robot"`
+	Col   int    `json:"col"`
+	Row   int    `json:"row"`
 }
 
 type welcomeOut struct {
@@ -116,7 +117,7 @@ func toChunkOut(c *core.ChunkContents) chunkOut {
 }
 
 func toPlayerOut(p domain.Player) playerOut {
-	return playerOut{ID: p.ID, Name: p.Name, Col: p.Cell.Col, Row: p.Cell.Row}
+	return playerOut{ID: p.ID, Name: p.Name, Robot: p.Robot, Col: p.Cell.Col, Row: p.Cell.Row}
 }
 
 // toCellsOut never gives null: an empty path is [].

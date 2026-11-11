@@ -21,12 +21,3 @@ func TestRedactedDBURL(t *testing.T) {
 	assert.NotContains(t, redacted, "secret")
 	assert.Contains(t, redacted, "localhost:5434/donut")
 }
-
-func TestSeed(t *testing.T) {
-	seed, err := Config{StarterMapSeed: 42}.Seed()
-	require.NoError(t, err)
-	assert.Equal(t, uint64(42), seed)
-
-	_, err = Config{StarterMapSeed: -1}.Seed()
-	assert.Error(t, err)
-}

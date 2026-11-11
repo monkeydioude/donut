@@ -46,6 +46,20 @@ export function chunkOrigin(key: ChunkKey): TilePoint {
   return { col: key.cx * CHUNK_SIZE, row: key.cy * CHUNK_SIZE };
 }
 
+/** The 4 chunks beside a chunk, across the seams on a wrapping grid; past a bounded grid's edges, none. */
+export function chunksBeside(grid: Grid, key: ChunkKey): ChunkKey[] {
+  const columns = Math.ceil(grid.width / CHUNK_SIZE);
+  const rows = Math.ceil(grid.height / CHUNK_SIZE);
+  const beside = [
+    { cx: key.cx + 1, cy: key.cy },
+    { cx: key.cx - 1, cy: key.cy },
+    { cx: key.cx, cy: key.cy + 1 },
+    { cx: key.cx, cy: key.cy - 1 },
+  ];
+  if (grid.wraps) return beside.map(({ cx, cy }) => ({ cx: mod(cx, columns), cy: mod(cy, rows) }));
+  return beside.filter(({ cx, cy }) => cx >= 0 && cy >= 0 && cx < columns && cy < rows);
+}
+
 /** A chunk's key as a string, to index chunks by. */
 export function chunkId(key: ChunkKey): string {
   return `${key.cx},${key.cy}`;

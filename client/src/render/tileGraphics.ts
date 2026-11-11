@@ -1,10 +1,11 @@
 import { CanvasSource, Texture } from 'pixi.js';
 import type { Rng } from '../core/rng';
+import type { FaceMaterial, FaceSide } from '../art/cliff';
+import { edgesKey, type Corner, type Edge } from '../art/edges';
 import type { PixelBuffer } from '../art/pixelBuffer';
-import type { PlayerLook } from '../art/player';
-import type { ArtSet, SpriteArt } from '../art/tileArtSet';
+import type { ArtSet, SpriteArt, TerrainArt } from '../art/tileArtSet';
 import { groundCenter, type TileFrame } from '../art/tileFrame';
-import type { DrawnGroundKind, ObjectKind } from '../map/worldMap';
+import type { ObjectKind } from '../map/worldMap';
 
 /** A texture ready to draw, with the point of it that sits on its cell's ground center. */
 export interface SpriteGraphic {
@@ -12,11 +13,21 @@ export interface SpriteGraphic {
   pivot: { x: number; y: number };
 }
 
-/** Several variants per ground and object kind, so the world doesn't look repetitive; one per player look. */
+/** The terrain's sprites, painted the first time they're needed, then kept. */
+export interface TerrainGraphics {
+  face(material: FaceMaterial, side: FaceSide): SpriteGraphic;
+  rim(edges: readonly Edge[], corners: readonly Corner[]): SpriteGraphic;
+  water(flowFrame: number, foam: readonly Edge[]): SpriteGraphic;
+  hole(rim: readonly Edge[]): SpriteGraphic;
+  ocean(foam: readonly Edge[]): SpriteGraphic;
+  bridge(rails: readonly Edge[]): SpriteGraphic;
+}
+
+/** Several variants of grass and of each object kind, so the world doesn't look repetitive; the terrain's pieces. */
 export interface WorldGraphics {
-  ground: Record<DrawnGroundKind, readonly SpriteGraphic[]>;
+  grass: readonly SpriteGraphic[];
   objects: Record<ObjectKind, readonly SpriteGraphic[]>;
-  players: Record<PlayerLook, SpriteGraphic>;
+  terrain: TerrainGraphics;
 }
 
 export type TextureFactory = (buffer: PixelBuffer) => Texture;
@@ -36,9 +47,30 @@ export function createWorldGraphics(options: WorldGraphicsOptions): WorldGraphic
   });
   const variantsOf = (art: SpriteArt) => Array.from({ length: variantsPerKind }, () => graphicOf(art));
   return {
-    ground: { grass: variantsOf(artSet.ground.grass) },
+    grass: variantsOf(artSet.grass),
     objects: { rock: variantsOf(artSet.objects.rock) },
-    players: { you: graphicOf(artSet.players.you), other: graphicOf(artSet.players.other) },
+    terrain: terrainGraphics(artSet.terrain, toTexture),
+  };
+}
+
+/** Each terrain piece painted once for its key, then kept: there are a few dozen at most. */
+function terrainGraphics(art: TerrainArt, toTexture: TextureFactory): TerrainGraphics {
+  const kept = new Map<string, SpriteGraphic>();
+  const once = (key: string, frame: TileFrame, paint: () => PixelBuffer): SpriteGraphic => {
+    let graphic = kept.get(key);
+    if (!graphic) {
+      graphic = spriteGraphic(paint(), frame, toTexture);
+      kept.set(key, graphic);
+    }
+    return graphic;
+  };
+  return {
+    face: (material, side) => once(`face ${material} ${side}`, art.tileFrame, () => art.face(material, side)),
+    rim: (edges, corners) => once(`rim ${edgesKey([...edges, ...corners])}`, art.tileFrame, () => art.rim(edges, corners)),
+    water: (flowFrame, foam) => once(`water ${flowFrame} ${edgesKey(foam)}`, art.tileFrame, () => art.water(flowFrame, foam)),
+    hole: (rim) => once(`hole ${edgesKey(rim)}`, art.tileFrame, () => art.hole(rim)),
+    ocean: (foam) => once(`ocean ${edgesKey(foam)}`, art.tileFrame, () => art.ocean(foam)),
+    bridge: (rails) => once(`bridge ${edgesKey(rails)}`, art.bridgeFrame, () => art.bridge(rails)),
   };
 }
 

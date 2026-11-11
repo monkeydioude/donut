@@ -1,0 +1,35 @@
+GIMP Palette
+Name: Donut map world
+Columns: 8
+#
+116 211 165	ground.png: grass
+111 183 224	ground.png: water
+ 43  37  64	ground.png: hole
+185 138  90	ground.png: bridge
+ 79 159 216	ground.png: ocean
+ 32  32  32	height.png: height -3
+ 64  64  64	height.png: height -2
+ 96  96  96	height.png: height -1
+128 128 128	height.png: height 0
+160 160 160	height.png: height 1
+192 192 192	height.png: height 2
+224 224 224	height.png: height 3
+127 217 154	regions.png: Sprinkle Meadow
+108 201 160	regions.png: Glaze Hills
+138 223 174	regions.png: Cinnamon Vale
+104 207 176	regions.png: Maple Hollow
+147 217 156	regions.png: Honey Downs
+116 199 147	regions.png: Sugar Fields
+130 224 189	regions.png: Cocoa Glen
+ 96 194 161	regions.png: Frosting Flats
+156 227 176	regions.png: Crumb Valley
+111 214 191	regions.png: Jelly Ridge
+134 207 143	regions.png: Cruller Heath
+121 189 159	regions.png: Powder Plains
+ 13 153 119	regions.png: Caramel Shore
+ 14 153 119	regions.png: Nougat Cliffs
+ 15 153 119	regions.png: Praline Woods
+ 16 153 119	regions.png: Glaze Sea
+ 17 153 119	regions.png: Syrup Sea
+ 18 153 119	regions.png: Custard Sea
+210 206 197	objects.png: rock

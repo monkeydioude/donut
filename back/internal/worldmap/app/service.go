@@ -1,4 +1,5 @@
-// Package app holds the worldmap use-cases: list and describe maps, create the starter world, give a room its world.
+// Package app holds the worldmap use-cases: list and describe maps, create the starter world from its file, reset a
+// map from its file, give a room its world.
 package app
 
 import (
@@ -6,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"time"
 
 	"donut/internal/worldmap/domain"
@@ -20,15 +20,23 @@ type Store interface {
 	DescriptionBySlug(ctx context.Context, slug string) (domain.Description, error)
 	MapBySlug(ctx context.Context, slug string) (domain.Map, error)
 	InsertMap(ctx context.Context, m domain.Map) (string, error)
+	ReplaceMap(ctx context.Context, m domain.Map) (id string, replaced bool, err error)
 }
 
+// ReadMapFile reads and checks the map file of a slug (ADR 0007): the server reads the ones built into it.
+type ReadMapFile func(slug string) (domain.Map, error)
+
+// StarterSlug is the map a server loads from its file when the database has no map.
+const StarterSlug = "world"
+
 type Service struct {
-	store Store
-	log   *slog.Logger
+	store  Store
+	log    *slog.Logger
+	images imageCache
 }
 
 func NewService(store Store, log *slog.Logger) *Service {
-	return &Service{store: store, log: log.With("component", "worldmap")}
+	return &Service{store: store, log: log.With("component", "worldmap"), images: imageCache{bySlug: map[string]MapImage{}}}
 }
 
 func (s *Service) ListMaps(ctx context.Context) ([]domain.Summary, error) {
@@ -68,9 +76,9 @@ func (s *Service) World(ctx context.Context, slug string) (domain.World, error) 
 	return world, nil
 }
 
-// EnsureStarterMap generates and saves the starter world when there is no map at all. It tells if it created it.
-// Two servers booting together may both try: the second one finds the slug taken and creates nothing.
-func (s *Service) EnsureStarterMap(ctx context.Context, seed uint64) (bool, error) {
+// EnsureStarterMap loads the starter world from its file and saves it when there is no map at all. It tells if it
+// created it. Two servers booting together may both try: the second one finds the slug taken and creates nothing.
+func (s *Service) EnsureStarterMap(ctx context.Context, read ReadMapFile) (bool, error) {
 	count, err := s.store.CountMaps(ctx)
 	if err != nil {
 		return false, fmt.Errorf("EnsureStarterMap: %w", err)
@@ -80,10 +88,8 @@ func (s *Service) EnsureStarterMap(ctx context.Context, seed uint64) (bool, erro
 		return false, nil
 	}
 	start := time.Now()
-	m := domain.Generate(domain.StarterWorld(), rand.New(rand.NewPCG(seed, seed)))
-	s.log.DebugContext(ctx, "starter world generated", "slug", m.Slug, "seed", seed, "size", fmt.Sprintf("%dx%d", m.Width, m.Height),
-		"chunks", len(m.Chunks), "regions", len(m.Regions), "rocks", len(m.Objects), "took", time.Since(start))
-	if err := m.Validate(); err != nil {
+	m, err := s.readMapFile(ctx, StarterSlug, read)
+	if err != nil {
 		return false, fmt.Errorf("EnsureStarterMap: %w", err)
 	}
 	if _, err := s.store.InsertMap(ctx, m); err != nil {
@@ -93,6 +99,36 @@ func (s *Service) EnsureStarterMap(ctx context.Context, seed uint64) (bool, erro
 		}
 		return false, fmt.Errorf("EnsureStarterMap: %w", err)
 	}
-	s.log.InfoContext(ctx, "starter world created", "slug", m.Slug, "chunks", len(m.Chunks), "rocks", len(m.Objects), "took", time.Since(start))
+	s.log.InfoContext(ctx, "starter world created from its file", "slug", m.Slug, "chunks", len(m.Chunks), "rocks", len(m.Objects), "took", time.Since(start))
 	return true, nil
+}
+
+// ResetMap replaces a map in the database with its file, in one transaction: its chunks, regions and rocks, the rocks
+// with new ids. A map not in the database yet is saved. Rooms already open keep the map they loaded: run it with the
+// server stopped.
+func (s *Service) ResetMap(ctx context.Context, slug string, read ReadMapFile) error {
+	start := time.Now()
+	m, err := s.readMapFile(ctx, slug, read)
+	if err != nil {
+		return fmt.Errorf("ResetMap: %w", err)
+	}
+	id, replaced, err := s.store.ReplaceMap(ctx, m)
+	if err != nil {
+		return fmt.Errorf("ResetMap: %w", err)
+	}
+	s.log.InfoContext(ctx, "map reset from its file", "slug", slug, "id", id, "replaced", replaced,
+		"chunks", len(m.Chunks), "regions", len(m.Regions), "rocks", len(m.Objects), "took", time.Since(start))
+	return nil
+}
+
+func (s *Service) readMapFile(ctx context.Context, slug string, read ReadMapFile) (domain.Map, error) {
+	start := time.Now()
+	m, err := read(slug)
+	if err != nil {
+		s.log.WarnContext(ctx, "map file refused", "slug", slug, "error", err)
+		return domain.Map{}, err
+	}
+	s.log.DebugContext(ctx, "map file read", "slug", slug, "size", fmt.Sprintf("%dx%d", m.Width, m.Height), "wraps", m.Wraps,
+		"regions", len(m.Regions), "rocks", len(m.Objects), "took", time.Since(start))
+	return m, nil
 }

@@ -107,11 +107,14 @@ func TestPathsAcrossTheSeams(t *testing.T) {
 	})
 }
 
-// ADR 0003 test 8, and ADR 0002 test 6
+// ADR 0003 test 8, ADR 0002 test 6, and ADR 0007 test 6
 func TestPathsOnRandomMaps(t *testing.T) {
 	rng := seeded(3)
-	for i := range 400 {
-		m := domain.Generate(domain.GenerateOptions{Width: 8, Height: 8, Wraps: i%2 == 1, RockChance: 0.3}, rng)
+	for i := range 600 {
+		m := domain.Generate(domain.GenerateOptions{Width: 8, Height: 8, Wraps: i%2 == 1, RockChance: 0.2}, rng)
+		if i%3 > 0 {
+			eachCell(m, func(c core.Cell) { m.SetHeight(c, int8(rng.IntN(3))) })
+		}
 		terrain := domain.NewTerrain(m)
 		from, to := randomCell(rng.IntN(64)), randomCell(rng.IntN(64))
 		if !terrain.IsWalkable(from) {
@@ -130,17 +133,18 @@ func TestPathsOnRandomMaps(t *testing.T) {
 
 func randomCell(n int) core.Cell { return cell(n%8, n/8) }
 
-// checkSteps checks each step is a walkable neighbor that cuts no corner, and gives the path's cost.
+// checkSteps checks each step is a walkable neighbor at most 1 level up or down that cuts no corner, and gives the
+// path's cost.
 func checkSteps(t *testing.T, terrain domain.Terrain, from core.Cell, path []core.Cell) float64 {
 	t.Helper()
 	grid := terrain.Grid()
 	cost := 0.0
 	for _, step := range path {
 		require.True(t, grid.AreNeighbors(from, step), "%v to %v is one step", from, step)
-		require.True(t, terrain.IsWalkable(step), "%v is walkable", step)
+		require.True(t, canStep(terrain, from, step), "%v to %v is walkable, 1 level at most", from, step)
 		if step.Col != from.Col && step.Row != from.Row {
 			d := grid.Offset(from, step)
-			require.True(t, walkableAt(terrain, from, cell(d.Col, 0)) && walkableAt(terrain, from, cell(0, d.Row)),
+			require.True(t, goesRound(terrain, from, step, cell(d.Col, 0)) && goesRound(terrain, from, step, cell(0, d.Row)),
 				"%v to %v cuts no corner", from, step)
 		}
 		cost += domain.StepCost(from, step)
@@ -149,10 +153,15 @@ func checkSteps(t *testing.T, terrain domain.Terrain, from core.Cell, path []cor
 	return cost
 }
 
-// walkableAt: the cell `d` away from c is walkable, across the seams on a wrapping map.
-func walkableAt(terrain domain.Terrain, c, d core.Cell) bool {
-	next, ok := terrain.Grid().Normalize(cell(c.Col+d.Col, c.Row+d.Row))
-	return ok && terrain.IsWalkable(next)
+// canStep: b is walkable and at most 1 level from a.
+func canStep(terrain domain.Terrain, a, b core.Cell) bool {
+	return terrain.IsWalkable(b) && absInt(int(terrain.HeightAt(a))-int(terrain.HeightAt(b))) <= 1
+}
+
+// goesRound: from a, the cell `d` away and then b are both steps, across the seams on a wrapping map.
+func goesRound(terrain domain.Terrain, a, b, d core.Cell) bool {
+	beside, ok := terrain.Grid().Normalize(cell(a.Col+d.Col, a.Row+d.Row))
+	return ok && canStep(terrain, a, beside) && canStep(terrain, beside, b)
 }
 
 // shortestCost is a plain Dijkstra on the 8 x 8 map, with the same step rules: the answer A* must find.
@@ -176,10 +185,10 @@ func shortestCost(terrain domain.Terrain, from, to core.Cell) (float64, bool) {
 		for dc := -1; dc <= 1; dc++ {
 			for dr := -1; dr <= 1; dr++ {
 				next, ok := terrain.Grid().Normalize(cell(current.Col+dc, current.Row+dr))
-				if !ok || next == current || !terrain.IsWalkable(next) {
+				if !ok || next == current || !canStep(terrain, current, next) {
 					continue
 				}
-				if dc != 0 && dr != 0 && (!walkableAt(terrain, current, cell(dc, 0)) || !walkableAt(terrain, current, cell(0, dr))) {
+				if dc != 0 && dr != 0 && (!goesRound(terrain, current, next, cell(dc, 0)) || !goesRound(terrain, current, next, cell(0, dr))) {
 					continue
 				}
 				if c, ok := cost[next]; !ok || best+domain.StepCost(current, next) < c {
@@ -188,4 +197,116 @@ func shortestCost(terrain domain.Terrain, from, to core.Cell) (float64, bool) {
 			}
 		}
 	}
+}
+
+// drawnMap is a bounded map drawn in text, a character per cell: '0' to '3' grass at that height, 'w' water at -1,
+// 'h' a hole, 'b' a bridge and 'r' a rock, at 0.
+func drawnMap(rows ...string) domain.Map {
+	m := mapWithRocks(len(rows[0]), len(rows))
+	kinds := map[rune]domain.TileKind{'w': domain.TileWater, 'h': domain.TileHole, 'b': domain.TileBridge, 'o': domain.TileOcean}
+	for row, line := range rows {
+		for col, char := range line {
+			c := cell(col, row)
+			switch {
+			case char >= '0' && char <= '3':
+				m.SetHeight(c, int8(char-'0'))
+			case char == 'r':
+				m.Objects = append(m.Objects, domain.Object{Kind: domain.ObjectRock, Col: col, Row: row})
+			case char == 'w':
+				m.SetGround(c, kinds[char])
+				m.SetHeight(c, -1)
+			default:
+				m.SetGround(c, kinds[char])
+			}
+		}
+	}
+	return m
+}
+
+// ADR 0007 test 3
+func TestStepsOnHeights(t *testing.T) {
+	t.Run("one level up or down is a step", func(t *testing.T) {
+		terrain := domain.NewTerrain(drawnMap("01"))
+		assert.Equal(t, []core.Cell{cell(1, 0)}, terrain.Path(cell(0, 0), cell(1, 0)))
+		assert.Equal(t, []core.Cell{cell(0, 0)}, terrain.Path(cell(1, 0), cell(0, 0)))
+	})
+
+	t.Run("two levels is a cliff, either way", func(t *testing.T) {
+		terrain := domain.NewTerrain(drawnMap("02"))
+		assert.Nil(t, terrain.Path(cell(0, 0), cell(1, 0)))
+		assert.Nil(t, terrain.Path(cell(1, 0), cell(0, 0)))
+	})
+
+	for name, side := range map[string]string{"a cliff": "02", "a hole": "0h", "water": "0w"} {
+		t.Run("no diagonal past "+name+" beside it", func(t *testing.T) {
+			terrain := domain.NewTerrain(drawnMap(side, "01"))
+			assert.Equal(t, []core.Cell{cell(0, 1), cell(1, 1)}, terrain.Path(cell(0, 0), cell(1, 1)))
+		})
+	}
+}
+
+// ADR 0007 test 4
+func TestPathsOnTerrain(t *testing.T) {
+	t.Run("a hill of terraces is climbed ring by ring", func(t *testing.T) {
+		terrain := domain.NewTerrain(drawnMap(
+			"0000000",
+			"0111110",
+			"0122210",
+			"0123210",
+			"0122210",
+			"0111110",
+			"0000000",
+		))
+		assert.Equal(t, []core.Cell{cell(1, 1), cell(2, 2), cell(3, 3)}, terrain.Path(cell(0, 0), cell(3, 3)))
+	})
+
+	t.Run("a plateau ringed by a cliff can't be reached", func(t *testing.T) {
+		terrain := domain.NewTerrain(drawnMap(
+			"00000",
+			"02220",
+			"02220",
+			"02220",
+			"00000",
+		))
+		assert.Nil(t, terrain.Path(cell(0, 0), cell(2, 2)))
+		assert.Nil(t, terrain.Path(cell(0, 0), cell(1, 1)), "its edge either")
+	})
+
+	t.Run("the river is crossed over a bridge only", func(t *testing.T) {
+		river := []string{"0000000000", "wwwwwwwbbw", "0000000000"}
+		path := domain.NewTerrain(drawnMap(river...)).Path(cell(0, 0), cell(0, 2))
+		require.NotEmpty(t, path)
+		crossed := false
+		for _, step := range path {
+			if step.Row == 1 {
+				assert.Contains(t, []int{7, 8}, step.Col, "%v is on the bridge", step)
+				crossed = true
+			}
+		}
+		assert.True(t, crossed)
+
+		river[1] = "wwwwwwwwww"
+		assert.Nil(t, domain.NewTerrain(drawnMap(river...)).Path(cell(0, 0), cell(0, 2)), "no bridge, no way across")
+		river[1] = "oooooooooo"
+		assert.Nil(t, domain.NewTerrain(drawnMap(river...)).Path(cell(0, 0), cell(0, 2)), "the ocean is never crossed (ADR 0008)")
+	})
+}
+
+// ADR 0007 test 5
+func TestAreasFollowSteps(t *testing.T) {
+	t.Run("a cliff line splits the map, a ramp joins it", func(t *testing.T) {
+		split := domain.NewTerrain(drawnMap("0022", "0022", "0022"))
+		assert.Nil(t, split.Path(cell(0, 0), cell(3, 0)))
+		ramp := domain.NewTerrain(drawnMap("0022", "0012", "0022"))
+		assert.NotEmpty(t, ramp.Path(cell(0, 0), cell(3, 0)))
+	})
+
+	t.Run("a target behind a cliff is refused without searching", func(t *testing.T) {
+		m := mapWithRocks(256, 256)
+		m.SetHeight(cell(255, 255), 2)
+		terrain := domain.NewTerrain(m).WithSearchLimit(1 << 30)
+		start := time.Now()
+		assert.Nil(t, terrain.Path(cell(0, 0), cell(255, 255)))
+		assert.Less(t, time.Since(start), 5*time.Millisecond, "the areas say it's cut off: no search")
+	})
 }

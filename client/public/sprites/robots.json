@@ -1,0 +1,89 @@
+{
+  "cell": 16,
+  "sprites": [
+    {
+      "slug": "dome-head",
+      "x": 0,
+      "y": 0,
+      "rowId": 797552
+    },
+    {
+      "slug": "rusty-toy",
+      "x": 16,
+      "y": 0,
+      "rowId": 222810
+    },
+    {
+      "slug": "scrap-humanoid",
+      "x": 32,
+      "y": 0,
+      "rowId": 548926
+    },
+    {
+      "slug": "drill-worker",
+      "x": 48,
+      "y": 0,
+      "rowId": 519236
+    },
+    {
+      "slug": "cracked-companion",
+      "x": 64,
+      "y": 0,
+      "rowId": 45321
+    },
+    {
+      "slug": "round-bot",
+      "x": 80,
+      "y": 0,
+      "rowId": 1264097
+    },
+    {
+      "slug": "hard-hat",
+      "x": 96,
+      "y": 0,
+      "rowId": 1000213
+    },
+    {
+      "slug": "plastic-toy",
+      "x": 112,
+      "y": 0,
+      "rowId": 257408
+    },
+    {
+      "slug": "jumpsuit",
+      "x": 128,
+      "y": 0,
+      "rowId": 938094
+    },
+    {
+      "slug": "dial-eyes",
+      "x": 144,
+      "y": 0,
+      "rowId": 1227085
+    },
+    {
+      "slug": "gray-companion",
+      "x": 160,
+      "y": 0,
+      "rowId": 391771
+    },
+    {
+      "slug": "square-head",
+      "x": 176,
+      "y": 0,
+      "rowId": 713341
+    },
+    {
+      "slug": "toolbox-worker",
+      "x": 192,
+      "y": 0,
+      "rowId": 438868
+    },
+    {
+      "slug": "orange-wires",
+      "x": 208,
+      "y": 0,
+      "rowId": 49669
+    }
+  ]
+}

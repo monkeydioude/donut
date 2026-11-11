@@ -45,13 +45,27 @@ export type PixelTest = (x: number, y: number) => boolean;
 export function bufferFromRows(rows: readonly string[], palette: Readonly<Record<string, number>>): PixelBuffer {
   const width = Math.max(...rows.map((row) => row.length));
   const buffer = createPixelBuffer(width, rows.length);
+  stampRows(buffer, rows, palette, { x: 0, y: 0 });
+  return buffer;
+}
+
+/**
+ * Paints rows of palette characters over a buffer, from `origin`. A character mapped to null erases the pixel to
+ * transparent; one outside the palette leaves it as is.
+ */
+export function stampRows(
+  buffer: PixelBuffer,
+  rows: readonly string[],
+  palette: Readonly<Record<string, number | null>>,
+  origin: Point,
+): void {
   rows.forEach((row, y) => {
     [...row].forEach((char, x) => {
       const rgb = palette[char];
-      if (rgb !== undefined) setPixel(buffer, x, y, rgb);
+      if (rgb === null) setPixel(buffer, origin.x + x, origin.y + y, 0, 0);
+      else if (rgb !== undefined) setPixel(buffer, origin.x + x, origin.y + y, rgb);
     });
   });
-  return buffer;
 }
 
 /** True for a pixel of a shape touching a pixel outside it: where its outline goes. */

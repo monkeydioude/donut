@@ -1,4 +1,4 @@
-// Package wstransport is the presence module's websocket: GET /api/maps/{slug}/ws?player={uuid}&name={name}.
+// Package wstransport is the presence module's websocket: GET /api/maps/{slug}/ws?player={uuid}&name={name}&robot={slug}.
 package wstransport
 
 import (
@@ -44,12 +44,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	log := h.log.With("map", slug, "remote", r.RemoteAddr)
 	log.DebugContext(r.Context(), "ws connecting", "origin", r.Header.Get("Origin"))
-	id, name, err := playerFrom(r)
+	who, err := playerFrom(r)
 	if err != nil {
 		log.DebugContext(r.Context(), "ws refused: bad player", "status", http.StatusBadRequest, "reason", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	id := who.ID
 	log = log.With("player", id)
 	room, err := h.rooms.Room(r.Context(), slug)
 	if err != nil {
@@ -62,11 +63,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.DebugContext(r.Context(), "ws refused by the upgrade (foreign origin?)", "origin", r.Header.Get("Origin"), "error", err)
 		return // Accept answered already: 403 for a foreign origin
 	}
-	log.DebugContext(r.Context(), "ws open", "name", name, "compression_offered", r.Header.Get("Sec-WebSocket-Extensions") != "")
+	log.DebugContext(r.Context(), "ws open", "name", who.Name, "robot", who.Robot, "compression_offered", r.Header.Get("Sec-WebSocket-Extensions") != "")
 	conn.SetReadLimit(maxMessageBytes)
 	c := newClient(conn, log)
 	defer c.Close()
-	if err := room.Join(id, name, c); err != nil {
+	if err := room.Join(who, c); err != nil {
 		log.ErrorContext(r.Context(), "ws join failed", "error", err)
 		return
 	}
@@ -76,17 +77,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.DebugContext(r.Context(), "ws closed", "close_status", websocket.CloseStatus(reason), "reason", reason, "lasted", time.Since(start))
 }
 
-// playerFrom reads the player's guest id and name. It gives the public id: the guest id goes no further.
-func playerFrom(r *http.Request) (id, name string, err error) {
+// playerFrom reads the player's guest id, name and robot. It gives the public id: the guest id goes no further.
+func playerFrom(r *http.Request) (domain.Profile, error) {
 	query := r.URL.Query()
 	guestID, err := domain.ParseGuestID(query.Get("player"))
 	if err != nil {
-		return "", "", err
+		return domain.Profile{}, err
 	}
-	if name, err = domain.CleanName(query.Get("name")); err != nil {
-		return "", "", err
+	name, err := domain.CleanName(query.Get("name"))
+	if err != nil {
+		return domain.Profile{}, err
 	}
-	return domain.PublicID(guestID), name, nil
+	robot, err := domain.CleanRobot(query.Get("robot"))
+	if err != nil {
+		return domain.Profile{}, err
+	}
+	return domain.Profile{ID: domain.PublicID(guestID), Name: name, Robot: robot}, nil
 }
 
 func writeRoomError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {

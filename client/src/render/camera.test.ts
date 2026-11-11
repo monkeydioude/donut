@@ -3,6 +3,8 @@ import { createIsoProjection } from '../iso/projection';
 import { cellAt, followPosition, tileOnCanvas } from './camera';
 
 const projection = createIsoProjection(64, 32);
+const heights = { projection, levelPx: 16 };
+const flat = () => 0;
 
 // ADR 0003 test 30
 describe('followPosition', () => {
@@ -27,23 +29,28 @@ describe('cellAt', () => {
 
   it('finds the cell under a canvas point, through the world origin and zoom', () => {
     // tile (2, 1) is centered on world (32, 48), so on the canvas at (400 + 64, 100 + 96)
-    expect(cellAt({ x: 464, y: 196 }, world, projection, bounded)).toEqual({ col: 2, row: 1 });
+    expect(cellAt({ x: 464, y: 196 }, world, heights, flat, bounded)).toEqual({ col: 2, row: 1 });
   });
 
   it('gives null outside a bounded map', () => {
-    expect(cellAt({ x: 400, y: 60 }, world, projection, bounded)).toBeNull();
-    expect(cellAt({ x: 400, y: 100 + 8 * 32 * 2 }, world, projection, bounded)).toBeNull();
+    expect(cellAt({ x: 400, y: 60 }, world, heights, flat, bounded)).toBeNull();
+    expect(cellAt({ x: 400, y: 100 + 8 * 32 * 2 }, world, heights, flat, bounded)).toBeNull();
   });
 
   it('gives the cell within the map for a drawn copy past the seam', () => {
     // drawn tile (-1, 0) is centered on world (-32, -16): on the canvas at (400 - 64, 100 - 32)
-    expect(cellAt({ x: 336, y: 68 }, world, projection, { width: 160, height: 160, wraps: true })).toEqual({ col: 159, row: 0 });
+    expect(cellAt({ x: 336, y: 68 }, world, heights, flat, { width: 160, height: 160, wraps: true })).toEqual({ col: 159, row: 0 });
   });
 });
 
 describe('tileOnCanvas', () => {
   it('gives the corners and middle of a tile on the canvas', () => {
     const world = { origin: { x: 400, y: 100 }, zoom: 2 };
-    expect(tileOnCanvas({ col: 2, row: 1 }, world, projection, 64)).toEqual({ left: 400, right: 528, y: 196 });
+    expect(tileOnCanvas({ col: 2, row: 1 }, 0, world, heights, 64)).toEqual({ left: 400, right: 528, y: 196 });
+  });
+
+  it('at its height (ADR 0007)', () => {
+    const world = { origin: { x: 400, y: 100 }, zoom: 2 };
+    expect(tileOnCanvas({ col: 2, row: 1 }, 2, world, heights, 64)).toEqual({ left: 400, right: 528, y: 196 - 2 * 16 * 2 });
   });
 });

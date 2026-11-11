@@ -1,0 +1,21 @@
+{
+  "dataset": "Angais/pixel-art-atlas-1.4m",
+  "config": "default",
+  "split": "train",
+  "sprites": [
+    { "slug": "dome-head", "rowId": 797552, "sha256": "a794a8df493f48af232f4fef95c5818c419d55cee2a4f3fd70cc074a5d706b91" },
+    { "slug": "rusty-toy", "rowId": 222810, "sha256": "e1d88468ea6a5d2eede2b14a7219a7e0873ce3a24365824d7c13f946d1682521" },
+    { "slug": "scrap-humanoid", "rowId": 548926, "sha256": "e5598acd0e5db4e8549e6b11facf2eb4c1701658fa4df9204340941a9f1a4623" },
+    { "slug": "drill-worker", "rowId": 519236, "sha256": "ce5aa0d66f4fae663cfaaebe7f7e91235e1964254f72fef27ba7601e4e62ee77" },
+    { "slug": "cracked-companion", "rowId": 45321, "sha256": "33258c9ce457ae662d22b39916744f5a518e1a2fa7c65c46e1a7de04d1809b90" },
+    { "slug": "round-bot", "rowId": 1264097, "sha256": "a6858217e2aceefd9d00bc0345fbfb61baff9d5690bae48467ea65384d0ab525" },
+    { "slug": "hard-hat", "rowId": 1000213, "sha256": "bbd682342ada977e00b1c6ee202d782baa5ecd93ceee2473122f1a3cc7667a05" },
+    { "slug": "plastic-toy", "rowId": 257408, "sha256": "c4e0196f4541f0bb8dc1dafeee4e98b5feea251f19d0b4908cb67f257de29fce" },
+    { "slug": "jumpsuit", "rowId": 938094, "sha256": "4991ee55c5aab0db63b9b2f78fef4a854c002335e259b825d73e90a16900ecd1" },
+    { "slug": "dial-eyes", "rowId": 1227085, "sha256": "126fd50f4892c47c6aaef8ca72e4f8ddf512dfac71a9dd8672679a2f82502912" },
+    { "slug": "gray-companion", "rowId": 391771, "sha256": "26cf65b4639da86de6d34b8d6de20045eefaed4170d294083157cf1d6d3c03c8" },
+    { "slug": "square-head", "rowId": 713341, "sha256": "aa8465ab09f753da8ab33407df8bad0d32ff0a6314ceb8f66b0650d8ba6da480" },
+    { "slug": "toolbox-worker", "rowId": 438868, "sha256": "c231b59aa310619d2a4446f47c564a326e81549bd744b5b06d2725ad714f7364" },
+    { "slug": "orange-wires", "rowId": 49669, "sha256": "58c62d1886bbdce817c0a018c5d330761473dd0b1d75c76ac41b6eb45968f35d" }
+  ]
+}

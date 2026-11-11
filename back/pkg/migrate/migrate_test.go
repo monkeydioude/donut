@@ -2,6 +2,7 @@ package migrate_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -33,12 +34,12 @@ func TestApplyRunsEveryMigrationOnce(t *testing.T) {
 	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema)
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()))
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql"}, appliedFiles(t, ctx, tx, schema))
 	var maps int
 	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "maps"}.Sanitize()).Scan(&maps))
 
 	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()), "a second run applies nothing, so it doesn't fail on existing tables")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0001 test 6
@@ -52,7 +53,7 @@ func TestApplyStopsOnABrokenMigration(t *testing.T) {
 	err := migrate.Apply(ctx, tx, files, schema, logs.Discard())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "9999.up.sql")
-	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql"}, appliedFiles(t, ctx, tx, schema))
+	assert.Equal(t, []string{"0001.up.sql", "0002.up.sql", "0003.up.sql", "0004.up.sql"}, appliedFiles(t, ctx, tx, schema))
 }
 
 // ADR 0003 test 10
@@ -80,4 +81,43 @@ func TestMigration0002DropsTheOldMaps(t *testing.T) {
 	assert.Zero(t, maps, "meadow is gone")
 	assert.Zero(t, objects, "its rocks with it")
 	assert.Zero(t, groundColumns, "and so is the ground column")
+}
+
+// ADR 0007 test 22
+// ADR 0007 test 22 and ADR 0008 test 16: migrations 0003 and 0004 each delete every map.
+func TestMigrationsDeleteEveryMap(t *testing.T) {
+	for _, migration := range []string{"0003", "0004"} {
+		t.Run(migration, func(t *testing.T) { testMigrationDeletesEveryMap(t, migration) })
+	}
+}
+
+// testMigrationDeletesEveryMap applies the migrations before the one given, makes a map, then applies them all.
+func testMigrationDeletesEveryMap(t *testing.T, migration string) {
+	ctx := context.Background()
+	tx := pgtest.Tx(t, ctx)
+	schema := pgtest.NewSchemaName()
+	files := pgtest.RenameSchema(t, migrations.Files, migrations.Schema, schema).(fstest.MapFS)
+	before := fstest.MapFS{"init.sql": files["init.sql"]}
+	for name, file := range files {
+		if strings.HasPrefix(name, "up/") && name < "up/"+migration {
+			before[name] = file
+		}
+	}
+	require.NoError(t, migrate.Apply(ctx, tx, before, schema, logs.Discard()))
+	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	var mapID string
+	require.NoError(t, tx.QueryRow(ctx, `INSERT INTO `+table("maps")+` (slug, name, width, height, wraps)
+		VALUES ('world', 'World', 160, 160, true) RETURNING id`).Scan(&mapID))
+	_, err := tx.Exec(ctx, `INSERT INTO `+table("map_regions")+` (map_id, id, name, biome) VALUES ($1, 1, 'One', 'meadow')`, mapID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO `+table("map_objects")+` (map_id, kind, col, row) VALUES ($1, 'rock', 0, 0)`, mapID)
+	require.NoError(t, err)
+
+	require.NoError(t, migrate.Apply(ctx, tx, files, schema, logs.Discard()))
+
+	for _, name := range []string{"maps", "map_regions", "map_objects", "map_chunks"} {
+		var rows int
+		require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM `+table(name)).Scan(&rows))
+		assert.Zero(t, rows, "%s is empty", name)
+	}
 }

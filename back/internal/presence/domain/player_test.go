@@ -47,6 +47,20 @@ func TestCleanName(t *testing.T) {
 	}
 }
 
+// ADR 0006 tests 1 to 3
+func TestCleanRobot(t *testing.T) {
+	for _, good := range []string{"dome-head", "a", "robot-2", strings.Repeat("a", 32), ""} {
+		robot, err := domain.CleanRobot(good)
+		require.NoError(t, err, good)
+		assert.Equal(t, good, robot)
+	}
+
+	for _, bad := range []string{strings.Repeat("a", 33), "Dome", "dome head", "dome_head", "a/b", `"x"`, "'x'", "<b>", "rôbot", " dome"} {
+		_, err := domain.CleanRobot(bad)
+		assert.ErrorIs(t, err, errd.ErrBadRequest, bad)
+	}
+}
+
 func TestCheckStep(t *testing.T) {
 	grid := core.Grid{Width: 160, Height: 160}
 	from := core.Cell{Col: 2, Row: 2}

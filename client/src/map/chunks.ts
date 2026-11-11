@@ -1,5 +1,5 @@
 import type { TilePoint } from '../iso/projection';
-import { CHUNK_SIZE, chunkId, chunkOf, chunkOrigin, type ChunkKey } from './grid';
+import { CHUNK_SIZE, chunkId, chunkOf, chunkOrigin, normalize, type ChunkKey, type Grid } from './grid';
 import type { GroundKind, MapObject } from './worldMap';
 
 /** 32 x 32 cells of the map, as the server sent them: each cell's ground, height and region, row by row. */
@@ -14,6 +14,17 @@ export interface Chunk {
 
 /** The chunks your connection holds, by chunk id. */
 export type HeldChunks = ReadonlyMap<string, Chunk>;
+
+/** The chunks held right now: the session keeps it up to date, the views read it to draw on heights. */
+export interface HeldChunksRef {
+  current: HeldChunks;
+}
+
+/** A cell's ground and height. */
+export interface CellTerrain {
+  kind: GroundKind;
+  height: number;
+}
 
 export function emptyChunks(): HeldChunks {
   return new Map();
@@ -44,6 +55,28 @@ export function isHeld(held: HeldChunks, cell: TilePoint): boolean {
 export function groundAt(held: HeldChunks, cell: TilePoint): GroundKind | null {
   const chunk = chunkAt(held, cell);
   return chunk ? (chunk.ground[localIndex(chunk.key, cell)] ?? null) : null;
+}
+
+/** A cell's height, null when its chunk isn't held. */
+export function heightAt(held: HeldChunks, cell: TilePoint): number | null {
+  const chunk = chunkAt(held, cell);
+  return chunk ? (chunk.height[localIndex(chunk.key, cell)] ?? null) : null;
+}
+
+/** A cell's height to draw it at, from the chunks held now: a drawn cell is wrapped back into the map. 0 when not held. */
+export function heightForDrawing(held: HeldChunksRef, grid: Grid): (cell: TilePoint) => number {
+  return (cell) => {
+    const within = normalize(grid, cell);
+    return within ? (heightAt(held.current, within) ?? 0) : 0;
+  };
+}
+
+/** A cell's ground and height, null when its chunk isn't held. */
+export function terrainAt(held: HeldChunks, cell: TilePoint): CellTerrain | null {
+  const chunk = chunkAt(held, cell);
+  if (!chunk) return null;
+  const i = localIndex(chunk.key, cell);
+  return { kind: chunk.ground[i] ?? 'void', height: chunk.height[i] ?? 0 };
 }
 
 /** A cell's region id (0 for none), null when its chunk isn't held. */

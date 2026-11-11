@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 	"donut/internal/worldmap/app"
 	"donut/internal/worldmap/domain"
 	"donut/internal/worldmap/infra"
+	"donut/mapfiles"
 	"donut/pkg/errd"
 	"donut/pkg/logs"
 	"donut/pkg/pgtest"
@@ -36,32 +38,92 @@ func smallWorld() domain.Map {
 	return domain.Generate(opts, seeded(5))
 }
 
-// ADR 0003 test 11, and ADR 0001 test 7
+// ADR 0003 test 11, ADR 0001 test 7, and ADR 0007 test 20
 // DONUT_TEST_DATABASE_URL=postgres://donut:donut@localhost:5434/donut go test ./internal/worldmap/app
 func TestEnsureStarterMapCreatesTheWorldOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, ctx)
 
-	created, err := f.maps.EnsureStarterMap(ctx, 42)
+	created, err := f.maps.EnsureStarterMap(ctx, mapfiles.Read)
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	created, err = f.maps.EnsureStarterMap(ctx, 42)
+	created, err = f.maps.EnsureStarterMap(ctx, mapfiles.Read)
 	require.NoError(t, err)
 	assert.False(t, created, "a second boot creates nothing")
 
 	list, err := f.maps.ListMaps(ctx)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
-	assert.Equal(t, domain.Summary{ID: list[0].ID, Slug: "world", Name: "World", Width: 1024, Height: 512, Wraps: true}, list[0],
+	assert.Equal(t, domain.Summary{ID: list[0].ID, Slug: "world", Name: "World", Width: 2048, Height: 1024, Wraps: true}, list[0],
 		"the list has no contents")
 
 	saved, err := f.repo.MapBySlug(ctx, "world")
 	require.NoError(t, err)
-	generated := domain.Generate(domain.StarterWorld(), seeded(42))
-	assert.Len(t, saved.Chunks, 512)
-	assert.Len(t, saved.Regions, 12)
-	assert.Len(t, saved.Objects, len(generated.Objects))
+	file, err := mapfiles.Read("world")
+	require.NoError(t, err)
+	assert.Len(t, saved.Chunks, 2048)
+	assert.Equal(t, file.Chunks, saved.Chunks, "the file's cells")
+	assert.Len(t, saved.Regions, 18)
+	assert.Len(t, saved.Objects, len(file.Objects))
+}
+
+// ADR 0007 test 21
+func TestResetMapReplacesItWithItsFile(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, ctx)
+	oldID, err := f.repo.InsertMap(ctx, smallWorld())
+	require.NoError(t, err)
+	file := smallWorld()
+	file.Name = "Small, from its file"
+	file.Regions = file.Regions[:1]
+	eachChunk(file, func(chunk *domain.Chunk) {
+		for i := range chunk.Region {
+			chunk.Region[i] = 1
+			chunk.Height[i] = 2
+		}
+	})
+	file.Objects = file.Objects[:3]
+	read := func(slug string) (domain.Map, error) {
+		assert.Equal(t, "small", slug)
+		return file, nil
+	}
+
+	require.NoError(t, f.maps.ResetMap(ctx, "small", read))
+
+	saved, err := f.repo.MapBySlug(ctx, "small")
+	require.NoError(t, err)
+	assert.NotEqual(t, oldID, saved.ID, "a new map")
+	assert.Equal(t, "Small, from its file", saved.Name)
+	assert.Equal(t, file.Chunks, saved.Chunks, "the file's cells")
+	assert.Equal(t, []domain.Region{{ID: 1, Name: "One", Biome: domain.BiomeMeadow}}, saved.Regions)
+	assert.Len(t, saved.Objects, 3, "the file's rocks only")
+	var left int
+	require.NoError(t, f.tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM maps) + (SELECT count(*) FROM map_objects WHERE map_id = $1)
+		+ (SELECT count(*) FROM map_chunks WHERE map_id = $1) + (SELECT count(*) FROM map_regions WHERE map_id = $1)`, oldID).Scan(&left))
+	assert.Equal(t, 1, left, "only the new map: nothing left of the old one")
+
+	t.Run("a map not in the database yet is saved", func(t *testing.T) {
+		file.Slug = "fresh"
+		require.NoError(t, f.maps.ResetMap(ctx, "fresh", func(string) (domain.Map, error) { return file, nil }))
+		_, err := f.repo.MapBySlug(ctx, "fresh")
+		assert.NoError(t, err)
+	})
+
+	t.Run("a refused file changes nothing", func(t *testing.T) {
+		refused := errors.New("height.png (3, 4): #8c8c8c isn't a height")
+		err := f.maps.ResetMap(ctx, "small", func(string) (domain.Map, error) { return domain.Map{}, refused })
+		assert.ErrorIs(t, err, refused)
+		still, err := f.repo.MapBySlug(ctx, "small")
+		require.NoError(t, err)
+		assert.Equal(t, saved.ID, still.ID)
+	})
+}
+
+func eachChunk(m domain.Map, fn func(*domain.Chunk)) {
+	for _, chunk := range m.Chunks {
+		fn(chunk)
+	}
 }
 
 // ADR 0003 test 12, and ADR 0001 test 8

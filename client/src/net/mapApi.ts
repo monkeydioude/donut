@@ -7,6 +7,11 @@ export type FetchFn = (url: string) => Promise<Response>;
 
 const MAX_SIZE = 4096;
 
+/** Where the map's picture is (ADR 0005): the browser loads it, and keeps it by its ETag. */
+export function mapImageUrl(slug: string): string {
+  return `/api/maps/${encodeURIComponent(slug)}/image.png`;
+}
+
 /** Loads a map's description from the back (GET /api/maps/{slug}): its size and regions, without its cells. */
 export async function fetchDescription(slug: string, fetchFn: FetchFn, log: Log = silent): Promise<MapDescription> {
   const url = `/api/maps/${encodeURIComponent(slug)}`;

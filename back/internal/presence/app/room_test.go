@@ -133,8 +133,8 @@ const (
 func joinBoth(t *testing.T, room *app.Room) (*fakeClient, *fakeClient) {
 	t.Helper()
 	annClient, bobClient := &fakeClient{}, &fakeClient{}
-	require.NoError(t, room.Join(ann, "Ann", annClient))
-	require.NoError(t, room.Join(bob, "Bob", bobClient))
+	require.NoError(t, room.Join(domain.Profile{ID: ann, Name: "Ann"}, annClient))
+	require.NoError(t, room.Join(domain.Profile{ID: bob, Name: "Bob"}, bobClient))
 	annClient.take()
 	bobClient.take()
 	return annClient, bobClient
@@ -146,10 +146,10 @@ func moved(id string, c core.Cell) domain.Event { return domain.Moved{ID: id, Ce
 func TestJoinWelcomesAndTellsTheOthers(t *testing.T) {
 	w := newWorld()
 	annClient, bobClient := &fakeClient{}, &fakeClient{}
-	require.NoError(t, w.room.Join(ann, "Ann", annClient))
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann"}, annClient))
 	annClient.take()
 
-	require.NoError(t, w.room.Join(bob, "Bob", bobClient))
+	require.NoError(t, w.room.Join(domain.Profile{ID: bob, Name: "Bob"}, bobClient))
 
 	assert.Equal(t, []domain.Event{
 		domain.Welcome{You: bob, Step: domain.StepInterval, Players: []domain.Player{
@@ -247,7 +247,7 @@ func TestLeavingStopsTheWalkAndComingBackStandsWhereItGot(t *testing.T) {
 	assert.Empty(t, bobClient.take(), "a player who left doesn't walk")
 
 	again := &fakeClient{}
-	require.NoError(t, w.room.Join(ann, "Ann", again))
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann"}, again))
 	welcome := again.take()[0].(domain.Welcome)
 	assert.Contains(t, welcome.Players, domain.Player{ID: ann, Name: "Ann", Cell: cell(1, 1)})
 	w.tickAfter(time.Second)
@@ -293,7 +293,7 @@ func TestJoiningAgainReplacesTheOldConnection(t *testing.T) {
 	annClient, bobClient := joinBoth(t, w.room)
 
 	newTab := &fakeClient{}
-	require.NoError(t, w.room.Join(ann, "Ann", newTab))
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann"}, newTab))
 	assert.True(t, annClient.closed, "the old connection is closed")
 	assert.Len(t, newTab.take()[0].(domain.Welcome).Players, 2, "still one ann")
 	assert.Empty(t, bobClient.take(), "bob is not told ann joined twice")
@@ -308,6 +308,35 @@ func TestJoiningAgainReplacesTheOldConnection(t *testing.T) {
 	w.room.Walk(ann, newTab, cell(3, 2))
 	w.tickAfter(0)
 	assert.Equal(t, []domain.Event{moved(ann, cell(3, 2))}, bobClient.take())
+}
+
+// ADR 0006 test 7
+func TestAJoinerIsToldWithTheirRobot(t *testing.T) {
+	w := newWorld()
+	annClient, bobClient := &fakeClient{}, &fakeClient{}
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann", Robot: "dome-head"}, annClient))
+	annClient.take()
+
+	require.NoError(t, w.room.Join(domain.Profile{ID: bob, Name: "Bob", Robot: "rusty-toy"}, bobClient))
+
+	assert.Equal(t, []domain.Player{
+		{ID: ann, Name: "Ann", Robot: "dome-head", Cell: center},
+		{ID: bob, Name: "Bob", Robot: "rusty-toy", Cell: center},
+	}, bobClient.take()[0].(domain.Welcome).Players)
+	assert.Equal(t, []domain.Event{domain.Joined{Player: domain.Player{ID: bob, Name: "Bob", Robot: "rusty-toy", Cell: center}}},
+		annClient.take())
+}
+
+// ADR 0006 test 8
+func TestJoiningAgainKeepsTheFirstRobot(t *testing.T) {
+	w := newWorld()
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann", Robot: "dome-head"}, &fakeClient{}))
+
+	newTab := &fakeClient{}
+	require.NoError(t, w.room.Join(domain.Profile{ID: ann, Name: "Ann", Robot: "rusty-toy"}, newTab))
+
+	players := newTab.take()[0].(domain.Welcome).Players
+	assert.Equal(t, []domain.Player{{ID: ann, Name: "Ann", Robot: "dome-head", Cell: center}}, players)
 }
 
 // ADR 0001 test 18

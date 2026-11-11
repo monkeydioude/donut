@@ -16,6 +16,9 @@ const (
 	MinWrappingSize = 5 * core.ChunkSize
 	// MaxRegions is how many regions a map may have: a cell holds its region's id in one byte, 0 for none.
 	MaxRegions = 255
+	// MinHeight and MaxHeight bound a cell's height, in levels (ADR 0007).
+	MinHeight = -3
+	MaxHeight = 3
 )
 
 // TileKind is what the ground of a cell is made of. Its value is its code in the stored chunks.
@@ -25,12 +28,25 @@ const (
 	// TileVoid is no ground at all: not drawn, not walkable.
 	TileVoid TileKind = iota
 	TileGrass
+	// TileWater is a river or a lake: drawn, not walkable.
+	TileWater
+	// TileHole is a pit: drawn, not walkable.
+	TileHole
+	// TileBridge is a bridge's deck over the river: walkable.
+	TileBridge
+	// TileOcean is the sea (ADR 0008): drawn still, not walkable. Rivers and lakes are TileWater.
+	TileOcean
 )
 
-var tileNames = [...]string{TileVoid: "void", TileGrass: "grass"}
+var tileNames = [...]string{TileVoid: "void", TileGrass: "grass", TileWater: "water", TileHole: "hole", TileBridge: "bridge", TileOcean: "ocean"}
 
 func (k TileKind) Known() bool {
 	return int(k) < len(tileNames)
+}
+
+// Walkable: one may walk on this ground, when nothing stands on it.
+func (k TileKind) Walkable() bool {
+	return k == TileGrass || k == TileBridge
 }
 
 // String is the kind's name, as players are sent it.
@@ -138,6 +154,20 @@ func (m Map) SetRegion(c core.Cell, region uint8) {
 	chunk.Region[chunk.local(c)] = region
 }
 
+// HeightAt is the height of a cell within the map; 0 when its chunk is missing.
+func (m Map) HeightAt(c core.Cell) int8 {
+	if chunk, ok := m.Chunks[core.ChunkOf(c)]; ok {
+		return chunk.Height[chunk.local(c)]
+	}
+	return 0
+}
+
+// SetHeight changes the height of a cell within the map. Its chunk must exist.
+func (m Map) SetHeight(c core.Cell, height int8) {
+	chunk := m.Chunks[core.ChunkOf(c)]
+	chunk.Height[chunk.local(c)] = height
+}
+
 // RegionAt is the region id of a cell within the map, 0 for none or when its chunk is missing.
 func (m Map) RegionAt(c core.Cell) uint8 {
 	if chunk, ok := m.Chunks[core.ChunkOf(c)]; ok {
@@ -212,8 +242,8 @@ func (m Map) validateObjects() error {
 			return invalid("unknown object kind %q", object.Kind)
 		case !grid.Contains(cell):
 			return invalid("object at %v is outside the map", cell)
-		case m.GroundAt(cell) == TileVoid:
-			return invalid("object at %v stands on void", cell)
+		case m.GroundAt(cell) != TileGrass:
+			return invalid("object at %v stands on %v, not grass", cell, m.GroundAt(cell))
 		case taken[cell]:
 			return invalid("two objects on %v", cell)
 		}
